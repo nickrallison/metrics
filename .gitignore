@@ -1,2 +1,6 @@
 /target
 output/
+
+# Keep source implementations visible when local excludes ignore benchmarks/.
+!/src/benchmarks/
+!/src/benchmarks/**

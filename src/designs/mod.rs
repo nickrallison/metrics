@@ -1,6 +1,6 @@
 pub mod verilog;
+use verilog::VerilogDesign;
 
-#[derive(Debug, Clone)]
-pub enum Design {
-    Verilog(VerilogDesign),
+pub trait Design {
+    fn into_verilog(&self) -> VerilogDesign {}
 }

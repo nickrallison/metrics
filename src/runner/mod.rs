@@ -1,15 +1,17 @@
+pub mod yosys_synth;
+
 use std::path::PathBuf;
 
-use crate::designs::verilog::VerilogDesign;
-
-pub trait BenchmarkResult {}
+use crate::designs::Design;
 
 pub trait Benchmark<T>
 where
     T: BenchmarkResult,
 {
-    fn run(&self, design: VerilogDesign) -> T;
+    fn run(&self, design: &impl Design) -> T;
 }
+
+pub trait BenchmarkResult {}
 
 #[derive(Debug, Clone)]
 struct YosysSynthBenchmark {
@@ -18,7 +20,7 @@ struct YosysSynthBenchmark {
 }
 
 impl Benchmark<YosysSynthResult> for YosysSynthBenchmark {
-    fn run(&self, design: VerilogDesign) -> YosysSynthResult {
+    fn run(&self, design: &impl Design) -> YosysSynthResult {
         todo!()
     }
 }

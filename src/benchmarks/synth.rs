@@ -1,3 +1,11 @@
+//! Synthesize each allowed design/library pair with a fixed procedure.
+//!
+//! The suite currently expands the complete product; compatibility filtering is
+//! pending. Preserve source order and preprocessing settings and verify input
+//! contents on resume. `SynthOptions` and repetitions belong to each workload.
+//! Area may be unavailable; retain the library/tool's actual area units.
+//! A reusable synthesis view and manifest adapter remain future work.
+
 use std::{num::NonZeroU32, time::Duration};
 
 use serde::{Deserialize, Serialize};

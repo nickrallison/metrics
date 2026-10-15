@@ -1,4 +1,20 @@
 //! Compare the MCM pass, a fixed paper tool, and synthesis with/without MCM.
+//!
+//! One instance is one ordered signed coefficient set and its widths/options.
+//! Generate its Verilog, profile the current Yosys MCM pass, obtain the paper
+//! reference from the same coefficients, then synthesize with and without MCM.
+//! The paper tool consumes coefficients and returns operation/DAG statistics;
+//! it need not consume or emit Verilog. Keep all comparisons in this benchmark.
+//!
+//! `examples/reference/mcm.py` preserves the original commands, parsers, generator,
+//! and formulas. Its companion README records historical quirks and changes
+//! required by the scaffold's timing, repetition, caching, and retention contracts.
+//! Preserve widths, signedness, order, and options across each comparison.
+//!
+//! Preparation is outside subprocess timing. Repetition strategy belongs here;
+//! cache the independent paper observations, not the composite Yosys output.
+//! Current output models successful comparisons. A phase error fails the whole
+//! comparison unless partial-result fields are explicitly introduced later.
 
 mod output;
 mod view;

@@ -19,12 +19,14 @@ fn main() -> Result<()> {
             branch: "main".into(),
         },
         // Replace this anchor with a commit on the selected Yosys branch.
-        revisions: RevisionSelection::Since(CommitId("replace-with-start-commit".into())),
+        revisions: RevisionSelection::Since(CommitId(
+            "8802950c22d4dd32abd482f409c83396d04bd496".into(),
+        )),
         suite: McmSuite {
             coefficient_sets: vec![vec![3, 5, 7], vec![-11, 17, 31]],
             input_width: 32,
             library: CellLibrary {
-                name: "Nangate".into(),
+                name: "Nangate45nm".into(),
                 liberty: "../yosys/tests/techmap/mcm/NangateOpenCellLibrary_typical.lib".into(),
             },
             paper: PaperTool {

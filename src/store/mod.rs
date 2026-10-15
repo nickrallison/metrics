@@ -1,4 +1,26 @@
 //! Typed history storage and independent reference computations.
+//!
+//! Keep common experiment/commit/attempt metadata in relational records and
+//! benchmark-specific configuration/output in versioned serialized payloads.
+//! Authors provide typed data rather than SQL migrations per benchmark. Generic
+//! metric indexing is deferred; views can derive values from typed history.
+//!
+//! Register the frozen benchmark collection once and assign storage-owned IDs.
+//! Attempt start/finish and commit-completion operations still need adding to the
+//! trait. Finalization should consistently persist its outcome and any artifact
+//! references. Interrupted attempts must remain distinguishable from terminal
+//! failures and must not advance completion.
+//!
+//! Queries select measurement attempts of one declared kind/version. The caller
+//! chooses the matching output type; reject inconsistent payload metadata rather
+//! than guessing its schema. Preserve exact-workload filtering and deterministic
+//! revision order. Retry selection must choose attempts explicitly, never pool
+//! retries as extra samples. The initial selection policy is still undecided.
+//!
+//! Inspection attempts link to their source record and are excluded from normal
+//! history summaries. They may request logs/scripts/netlists, whose generation
+//! changes timing. Verify original inputs, tools, and benchmark version before
+//! claiming reproduction; discarded artifacts cannot be recovered from old runs.
 
 mod reference;
 mod sqlite;
@@ -75,5 +97,8 @@ pub trait Store: ReferenceCache {
     /// Validate the stored kind/version before deserializing the selected output.
     fn history<O: DeserializeOwned>(&self, query: &HistoryQuery) -> Result<History<O>>;
 
+    /// Last commit in the processed prefix of this experiment's selected history.
+    /// Terminal failures count as processed; unfinished earlier commits block
+    /// advancement. This is not the maximum commit timestamp or newest result.
     fn last_complete(&self, experiment: ExperimentId) -> Result<Option<CommitId>>;
 }

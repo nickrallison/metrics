@@ -63,9 +63,14 @@ clean
 tee -o "output/synth.stat" stat -liberty "/home/nick/Projects/yosys/tests/techmap/mcm/NangateOpenCellLibrary_typical.lib"
 ```
 
+Then the user selects the set of designs they want to test on, as well as the cell libs they want to test on
+
+Then they get back a ui with the history of the commits they ran on for each design
+
 ## thoughts
 
 - I wonder if I should be yosys / commit abstract? might want to combine with openroad later, multiple chained runners? what is the right abstraction
+  - is there an idiomatic / nice way to chain runners sequentially
 - Ideally, I want to make the "user" only concerned with defining what a specific benchmark does, how to parse the results, how to serialize / deserialize with DB, and how to "Display" (unsure what this entails)
   - I think I'll want at least a graph with the specific Runner::Input Selectable, or averaged or ... in some sort of UI, either TUI or webui, idk yet, i just want a generic interface for either
 - Prepping Designs
@@ -76,3 +81,5 @@ tee -o "output/synth.stat" stat -liberty "/home/nick/Projects/yosys/tests/techma
   - What if I want more than just the main branch, maybe I want it enable for my dev branch, but just a specific kind of benchmark
     - e.g. I was working on a branch for optimizing multiplication by a constant, and created a synthetic benchmark set on which to run and compare against a _seperate tool_ as well as running with and without the new pass to see if it had a measurable effect vs just noise
 - The end result is something like the restricted cartesian product of the input sets (restricted as in some constraints exist on the relations between the input items)
+- What is the simplest way to benchmark performance, Yosys has some amount of internal performance monitoring, I can optionally use that to hook in and get more in-depth info
+  - what about non-yosys tests,

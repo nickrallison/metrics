@@ -1,9 +1,17 @@
 use std::path::PathBuf;
 
+use super::Design;
+
 #[derive(Debug, Clone)]
 pub struct VerilogDesign {
     top: String,
     files: Vec<PathBuf>,
+}
+
+impl Design for VerilogDesign {
+    fn into_verilog(&self) -> VerilogDesign {
+        self.clone()
+    }
 }
 
 impl VerilogDesign {

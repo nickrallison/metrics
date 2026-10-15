@@ -1,29 +1,43 @@
 use std::path::PathBuf;
 
 use crate::designs::verilog::VerilogDesign;
+use crate::runner::Benchmark;
 use crate::runner::yosys_synth::YosysSynthBenchmark;
+use crate::util::{OutputTarget, RunOptions};
 
 mod designs;
 mod runner;
+pub mod util;
 
-fn main() {
+fn main() -> std::io::Result<()> {
     let design = VerilogDesign::new(
         "ExampleBoomSystem".into(),
         vec![PathBuf::from("verilog/MediumBoom.v")],
     );
 
+    let output_dir = PathBuf::from("output");
     let runner = YosysSynthBenchmark::new(
         PathBuf::from("/home/nick/Projects/yosys/build-rel/yosys"),
         PathBuf::from(
             "/home/nick/Projects/yosys/tests/techmap/mcm/NangateOpenCellLibrary_typical.lib",
         ),
-        // read_verilog "tests/techmap/mcm/results/test_0/unoptimized.v"
-        // hierarchy -top unoptimized
-        // synth -top unoptimized -noabc
-        // abc -liberty "tests/techmap/mcm/NangateOpenCellLibrary_typical.lib"
-        // tee -o "tests/techmap/mcm/results/test_0/synth.stat" stat -liberty "tests/techmap/mcm/NangateOpenCellLibrary_typical.lib"
-        vec![],
-    );
+        output_dir.clone(),
+    )
+    .with_output(RunOptions {
+        stdout: OutputTarget::File(output_dir.join("stdout.log")),
+        stderr: OutputTarget::File(output_dir.join("stderr.log")),
+    });
 
-    println!("Hello, world!");
+    let result = runner.run(&design)?;
+    eprintln!(
+        "Yosys: {}, elapsed: {:.2?}",
+        result.process.status, result.process.elapsed
+    );
+    if !result.process.status.success() {
+        return Err(std::io::Error::other(format!(
+            "Yosys failed with {}; see output/stdout.log and output/stderr.log",
+            result.process.status
+        )));
+    }
+    Ok(())
 }

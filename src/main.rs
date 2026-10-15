@@ -2,17 +2,19 @@ use std::path::PathBuf;
 
 use crate::designs::verilog::VerilogDesign;
 use crate::runner::Benchmark;
-use crate::runner::yosys_synth::YosysSynthBenchmark;
+use crate::runner::synth::YosysSynthBenchmark;
 use crate::util::{OutputTarget, RunOptions};
 
 mod designs;
 mod runner;
+mod suite;
 pub mod util;
+mod yosys;
 
 fn main() -> std::io::Result<()> {
     let design = VerilogDesign::new(
-        "ExampleBoomSystem".into(),
-        vec![PathBuf::from("verilog/MediumBoom.v")],
+        "\\vexriscv.demo.GenFull".into(),
+        vec![PathBuf::from("verilog/vexriscv.demo.GenFull.v")],
     );
 
     let output_dir = PathBuf::from("output");

@@ -8,35 +8,31 @@ use crate::runner::Benchmark;
 use crate::runner::BenchmarkResult;
 use crate::util::{RunOptions, RunResult, run_binary};
 
+mod commands;
+
+use commands::Commands;
+
 #[derive(Debug, Clone)]
-pub struct YosysSynthBenchmark {
-    yosys_path: PathBuf,
+pub struct SynthBenchmark {
+    name: String,
     cell_lib: PathBuf,
-    output_dir: PathBuf,
-    output: RunOptions,
+    // input_commands: Commands,
+    synth_commands: Commands,
+    output_commands: Commands,
 }
 
-impl YosysSynthBenchmark {
-    pub fn new(yosys_path: PathBuf, cell_lib: PathBuf, output_dir: PathBuf) -> Self {
+impl SynthBenchmark {
+    pub fn new(name: String, cell_lib: PathBuf) -> Self {
         Self {
-            yosys_path,
+            name,
             cell_lib,
-            output_dir,
-            output: RunOptions::default(),
+            synth_commands: Commands::default_synth(),
+            output_commands: Commands::default(),
         }
-    }
-
-    pub fn yosys_path(&self) -> &PathBuf {
-        &self.yosys_path
     }
 
     pub fn cell_lib(&self) -> &PathBuf {
         &self.cell_lib
-    }
-
-    pub fn with_output(mut self, output: RunOptions) -> Self {
-        self.output = output;
-        self
     }
 }
 
@@ -69,10 +65,13 @@ impl Benchmark<YosysSynthResult> for YosysSynthBenchmark {
             commands
         };
         fs::write(&script_path, format!("{}\n", commands.join("\n")))?;
+
+        let run_options = RunOptions::default();
+
         let process = run_binary(
             self.yosys_path(),
             [OsStr::new("-s"), script_path.as_os_str()],
-            &self.output,
+            &run_options,
         )?;
         Ok(YosysSynthResult { process })
     }

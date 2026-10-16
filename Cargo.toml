@@ -14,3 +14,4 @@ chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 diesel = { version = "~2.3.12", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
 # Enable bundled SQLite for Diesel without a system SQLite dependency.
 libsqlite3-sys = { version = "0.38", features = ["bundled"] }
+clap = { version = "4", features = ["derive"] }

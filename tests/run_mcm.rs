@@ -14,10 +14,8 @@ fn rejects_invalid_job_counts_before_starting_an_experiment() {
             .args(args)
             .output()
             .unwrap();
-        assert!(!output.status.success());
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains("--jobs requires a positive integer")
-        );
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&output.stderr).starts_with("error:"));
     }
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
 }

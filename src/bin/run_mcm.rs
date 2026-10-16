@@ -3,6 +3,8 @@ use std::{
     path::PathBuf,
 };
 
+use clap::Parser;
+
 use benchmarks::{
     Error, Result,
     benchmark::ArtifactPolicy,
@@ -18,82 +20,66 @@ use benchmarks::{
     store::{HistoryQuery, SqliteStore, Store},
 };
 
-fn main() -> Result<()> {
-    let mut output = OutputLayout {
-        output_dir: PathBuf::from("output"),
-        experiment: "mcm".into(),
-    };
-    let mut artifacts = ArtifactPolicy::default();
-    let mut jobs = None;
-    let mut options = RunOptions::default();
-    let mut commits = Vec::new();
-    let mut args = std::env::args().skip(1);
-    while let Some(flag) = args.next() {
-        match flag.as_str() {
-            "--help" | "-h" => {
-                println!(
-                    "Usage: run_mcm [--output-dir PATH] [--name NAME] [--experiment ID] [--commit REV] [--workload INDEX] [--artifacts all|none|logs,scripts,netlists] [--keep-artifacts] [--jobs N]\nCompatible experiments are reused. Repeat --commit or --workload to select multiple items.\nDefaults: output directory 'output', experiment name 'mcm', logs/scripts retained, build jobs equal to available CPUs."
-                );
-                return Ok(());
+#[derive(Debug, Parser)]
+#[command(
+    about = "Run MCM benchmarks across Yosys commits",
+    version,
+    args_override_self = true
+)]
+struct Args {
+    /// Root directory for results, artifacts, and build caches.
+    #[arg(long, value_name = "PATH", default_value = "output")]
+    output_dir: PathBuf,
+    /// Named experiment directory/database.
+    #[arg(long, default_value = "mcm")]
+    name: String,
+    /// Reuse an existing experiment's saved suite and repository settings.
+    #[arg(long, value_name = "ID", value_parser = clap::value_parser!(i64).range(1..))]
+    experiment: Option<i64>,
+    /// Yosys revision to run; repeat to select multiple commits.
+    #[arg(long = "commit", value_name = "REV")]
+    commits: Vec<String>,
+    /// Zero-based workload index; repeat to select multiple workloads.
+    #[arg(long = "workload", value_name = "INDEX")]
+    workloads: Vec<usize>,
+    /// Retain all logs, scripts, and netlists.
+    #[arg(long, overrides_with = "artifacts")]
+    keep_artifacts: bool,
+    /// Retention: all, none, or a comma-separated subset of logs,scripts,netlists.
+    /// Defaults to logs and scripts. The last retention flag wins.
+    #[arg(long, value_name = "POLICY", value_parser = artifact_policy, overrides_with = "keep_artifacts")]
+    artifacts: Option<ArtifactPolicy>,
+    /// Parallel compiler jobs, capped at available CPUs; defaults to that cap.
+    #[arg(long, value_name = "N")]
+    jobs: Option<NonZeroUsize>,
+}
+
+impl Args {
+    fn artifact_policy(&self) -> ArtifactPolicy {
+        if self.keep_artifacts {
+            ArtifactPolicy {
+                logs: true,
+                scripts: true,
+                netlists: true,
             }
-            "--output-dir" => {
-                output.output_dir = args
-                    .next()
-                    .ok_or_else(|| Error::Output("--output-dir requires a path".into()))?
-                    .into()
-            }
-            "--name" => {
-                output.experiment = args
-                    .next()
-                    .ok_or_else(|| Error::Output("--name requires an experiment name".into()))?
-            }
-            "--keep-artifacts" => {
-                artifacts = ArtifactPolicy {
-                    logs: true,
-                    scripts: true,
-                    netlists: true,
-                }
-            }
-            "--artifacts" => {
-                let value = argument(&mut args, "--artifacts")?;
-                artifacts = artifact_policy(&value)?;
-            }
-            "--experiment" => {
-                let value = argument(&mut args, "--experiment")?;
-                options.experiment = Some(
-                    value
-                        .parse::<i64>()
-                        .ok()
-                        .filter(|id| *id > 0)
-                        .ok_or_else(|| {
-                            Error::Benchmark("--experiment requires a positive integer".into())
-                        })?,
-                );
-            }
-            "--commit" => commits.push(CommitId(argument(&mut args, "--commit")?)),
-            "--workload" => {
-                options
-                    .workloads
-                    .push(argument(&mut args, "--workload")?.parse().map_err(|_| {
-                        Error::Benchmark("--workload requires a nonnegative integer".into())
-                    })?);
-            }
-            "--jobs" => {
-                jobs = Some(
-                    args.next()
-                        .and_then(|value| value.parse::<NonZeroUsize>().ok())
-                        .ok_or_else(|| {
-                            Error::Benchmark("--jobs requires a positive integer".into())
-                        })?,
-                );
-            }
-            value => {
-                return Err(Error::Output(format!(
-                    "unknown argument {value:?}; use --help"
-                )));
-            }
+        } else {
+            self.artifacts.unwrap_or_default()
         }
     }
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+    let artifacts = args.artifact_policy();
+    let output = OutputLayout {
+        output_dir: args.output_dir,
+        experiment: args.name,
+    };
+    let options = RunOptions {
+        experiment: args.experiment,
+        workloads: args.workloads,
+    };
+    let commits: Vec<_> = args.commits.into_iter().map(CommitId).collect();
     let mut experiment = Experiment {
         output,
         history: BranchHistory {
@@ -151,7 +137,7 @@ fn main() -> Result<()> {
     let mut builder = YosysBuilder {
         repository: experiment.history.repository.clone(),
         cache_dir: experiment.output.output_dir.join("builds/yosys"),
-        jobs,
+        jobs: args.jobs,
     };
     println!(
         "Configured {} MCM workloads",
@@ -171,12 +157,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn argument(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String> {
-    args.next()
-        .ok_or_else(|| Error::Benchmark(format!("{flag} requires a value")))
-}
-
-fn artifact_policy(value: &str) -> Result<ArtifactPolicy> {
+fn artifact_policy(value: &str) -> std::result::Result<ArtifactPolicy, String> {
     let mut policy = ArtifactPolicy {
         logs: false,
         scripts: false,
@@ -199,11 +180,52 @@ fn artifact_policy(value: &str) -> Result<ArtifactPolicy> {
             "scripts" => policy.scripts = true,
             "netlists" => policy.netlists = true,
             _ => {
-                return Err(Error::Benchmark(format!(
+                return Err(format!(
                     "unknown artifact kind {item:?}; use all, none, or logs,scripts,netlists"
-                )));
+                ));
             }
         }
     }
     Ok(policy)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_selectors_append_and_scalar_options_use_the_last_value() {
+        let args = Args::try_parse_from([
+            "run_mcm",
+            "--commit",
+            "first",
+            "--commit",
+            "second",
+            "--workload",
+            "0",
+            "--workload",
+            "2",
+            "--jobs",
+            "1",
+            "--jobs",
+            "3",
+        ])
+        .unwrap();
+        assert_eq!(args.commits, ["first", "second"]);
+        assert_eq!(args.workloads, [0, 2]);
+        assert_eq!(args.jobs.unwrap().get(), 3);
+    }
+
+    #[test]
+    fn the_last_artifact_policy_flag_wins() {
+        let args =
+            Args::try_parse_from(["run_mcm", "--keep-artifacts", "--artifacts", "none"]).unwrap();
+        let policy = args.artifact_policy();
+        assert!(!policy.logs && !policy.scripts && !policy.netlists);
+
+        let args =
+            Args::try_parse_from(["run_mcm", "--artifacts", "none", "--keep-artifacts"]).unwrap();
+        let policy = args.artifact_policy();
+        assert!(policy.logs && policy.scripts && policy.netlists);
+    }
 }

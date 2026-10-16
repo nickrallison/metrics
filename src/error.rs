@@ -36,6 +36,28 @@ pub enum Error {
     DatabaseConnection(#[from] diesel::ConnectionError),
     #[error("invalid storage state: {0}")]
     Storage(String),
+    #[error("experiment {0} does not exist")]
+    UnknownExperiment(i64),
+    #[error("commit {commit} is not registered in experiment {experiment}")]
+    UnregisteredCommit { experiment: i64, commit: String },
+    #[error("workload {index} is not registered in experiment {experiment}")]
+    UnregisteredBenchmark { experiment: i64, index: usize },
+    #[error("duplicate selected commit {0}")]
+    DuplicateCommit(String),
+    #[error("commit position {position} is already registered in experiment {experiment}")]
+    DuplicateCommitPosition { experiment: i64, position: usize },
+    #[error("conflicting metadata for commit {0}")]
+    CommitMetadataMismatch(String),
+    #[error("workload {index} differs from the frozen definition in experiment {experiment}")]
+    BenchmarkMismatch { experiment: i64, index: usize },
+    #[error("inspection source {0} must be a finished measurement of the same workload and commit")]
+    InvalidInspectionSource(i64),
+    #[error("attempt {0} does not exist")]
+    UnknownRun(i64),
+    #[error("attempt {0} is already finished")]
+    RunAlreadyFinished(i64),
+    #[error("position {0} exceeds SQLite integer range")]
+    PositionOutOfRange(usize),
     #[error("invalid view data: {0}")]
     InvalidView(String),
     #[error("benchmark error: {0}")]

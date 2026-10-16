@@ -1,5 +1,5 @@
-// Rust mappings for schema.sql. SQLite INTEGER values and their foreign keys
-// remain 64-bit; these declarations do not change the on-disk schema.
+// Source for table generation: see docs/schema.md after edits.
+// SQLite integers remain 64-bit. Relationships and validation live in Rust.
 diesel::table! {
     experiments (id) {
         id -> BigInt,

@@ -128,7 +128,10 @@ fn reuse_validation_rolls_back_new_commits_and_all_attempts_remain_queryable() {
     let mut next = bad.commits[0].clone();
     next.id.0 = "c".into();
     bad.commits = vec![next.clone(), next];
-    assert!(store.prepare_experiment(&bad, Some(experiment)).is_err());
+    assert!(matches!(
+        store.prepare_experiment(&bad, Some(experiment)),
+        Err(Error::DuplicateCommit(commit)) if commit == "c"
+    ));
     assert_eq!(
         store.experiment(experiment).unwrap().commits,
         definition.commits
@@ -447,17 +450,26 @@ fn invalid_inspection_links_are_rejected() {
         .unwrap();
     let mut inspection = start(experiment, &definition, 0, 0);
     inspection.purpose = RunPurpose::Inspection { source };
-    assert!(store.start_run(&inspection).is_err()); // source unfinished
+    assert!(matches!(
+        store.start_run(&inspection),
+        Err(Error::InvalidInspectionSource(id)) if id == source
+    )); // source unfinished
     finish(&mut store, source, 1);
     for (commit, benchmark) in [(1, 0), (0, 1)] {
         let mut wrong = start(experiment, &definition, commit, benchmark);
         wrong.purpose = RunPurpose::Inspection { source };
-        assert!(store.start_run(&wrong).is_err());
+        assert!(matches!(
+            store.start_run(&wrong),
+            Err(Error::InvalidInspectionSource(id)) if id == source
+        ));
     }
     let id = store.start_run(&inspection).unwrap();
     finish(&mut store, id, 99);
     inspection.purpose = RunPurpose::Inspection { source: id };
-    assert!(store.start_run(&inspection).is_err()); // source is another inspection
+    assert!(matches!(
+        store.start_run(&inspection),
+        Err(Error::InvalidInspectionSource(source)) if source == id
+    )); // source is another inspection
 }
 
 #[test]
@@ -466,22 +478,46 @@ fn attempt_metadata_must_match_frozen_definitions() {
     let original = start(experiment, &definition, 0, 0);
     let mut wrong = original.clone();
     wrong.commit.author = "changed".into();
-    assert!(store.start_run(&wrong).is_err());
+    assert!(matches!(
+        store.start_run(&wrong),
+        Err(Error::CommitMetadataMismatch(_))
+    ));
     wrong = original.clone();
     wrong.commit.id = CommitId("unknown".into());
-    assert!(store.start_run(&wrong).is_err());
+    assert!(matches!(
+        store.start_run(&wrong),
+        Err(Error::UnregisteredCommit { .. })
+    ));
     wrong = original.clone();
     wrong.benchmark.parameters = json!({"coefficient": 8});
-    assert!(store.start_run(&wrong).is_err());
+    assert!(matches!(
+        store.start_run(&wrong),
+        Err(Error::BenchmarkMismatch { .. })
+    ));
     wrong = original.clone();
     wrong.benchmark.version = 2;
-    assert!(store.start_run(&wrong).is_err());
+    assert!(matches!(
+        store.start_run(&wrong),
+        Err(Error::BenchmarkMismatch { .. })
+    ));
+    wrong = original.clone();
+    wrong.benchmark_index = definition.benchmarks.len();
+    assert!(matches!(
+        store.start_run(&wrong),
+        Err(Error::UnregisteredBenchmark { .. })
+    ));
     wrong = original.clone();
     wrong.benchmark_index = usize::MAX;
-    assert!(store.start_run(&wrong).is_err());
+    assert!(matches!(
+        store.start_run(&wrong),
+        Err(Error::PositionOutOfRange(_)) | Err(Error::UnregisteredBenchmark { .. })
+    ));
     wrong = original;
     wrong.experiment = 999;
-    assert!(store.start_run(&wrong).is_err());
+    assert!(matches!(
+        store.start_run(&wrong),
+        Err(Error::UnknownExperiment(999))
+    ));
     assert!(store.unfinished_runs(experiment).unwrap().is_empty());
 }
 
@@ -507,16 +543,15 @@ fn finalization_is_once_only_and_serialization_failure_leaves_attempt_pending() 
     ));
     assert_eq!(store.unfinished_runs(experiment).unwrap().len(), 1);
     finish(&mut store, id, 7);
-    assert!(
+    assert!(matches!(
         store
-            .finish_run(id, SystemTime::now(), &Outcome::Succeeded(metrics(99)))
-            .is_err()
-    );
-    assert!(
-        store
-            .finish_run(999, SystemTime::now(), &Outcome::Succeeded(metrics(99)))
-            .is_err()
-    );
+            .finish_run(id, SystemTime::now(), &Outcome::Succeeded(metrics(99))),
+        Err(Error::RunAlreadyFinished(record)) if record == id
+    ));
+    assert!(matches!(
+        store.finish_run(999, SystemTime::now(), &Outcome::Succeeded(metrics(99))),
+        Err(Error::UnknownRun(999))
+    ));
     assert!(
         matches!(&store.history::<Metrics>(&query(experiment)).unwrap().records[0].record.outcome, Outcome::Succeeded(value) if value.cells == 7)
     );
@@ -527,7 +562,10 @@ fn registration_rolls_back_invalid_definitions_and_keeps_existing_metadata_immut
     let mut store = SqliteStore::open(":memory:").unwrap();
     let mut invalid = definition();
     invalid.commits.push(invalid.commits[0].clone());
-    assert!(store.register_experiment(&invalid).is_err());
+    assert!(matches!(
+        store.register_experiment(&invalid),
+        Err(Error::DuplicateCommit(commit)) if commit == "b"
+    ));
     let count: i64 = store
         .read(|connection| Ok(experiments::table.count().get_result(connection)?))
         .unwrap();
@@ -537,7 +575,7 @@ fn registration_rolls_back_invalid_definitions_and_keeps_existing_metadata_immut
     definition.commits[0].author = "wrong metadata".into();
     assert!(matches!(
         store.register_experiment(&definition),
-        Err(Error::Storage(_))
+        Err(Error::CommitMetadataMismatch(_))
     ));
     assert_ne!(
         store.experiment(experiment).unwrap().commits[0].author,
@@ -547,6 +585,69 @@ fn registration_rolls_back_invalid_definitions_and_keeps_existing_metadata_immut
         .read(|connection| Ok(experiments::table.count().get_result(connection)?))
         .unwrap();
     assert_eq!(count, 1);
+}
+
+#[test]
+fn commit_position_collisions_return_a_typed_error_without_registering_the_commit() {
+    let (mut store, definition, experiment) = database();
+    let mut next = definition.commits[0].clone();
+    next.id.0 = "c".into();
+    let result = store
+        .connection
+        .get_mut()
+        .immediate_transaction(|connection| {
+            insert_commit(connection, &next)?;
+            register_commit(connection, experiment, &next, 0)
+        });
+    assert!(matches!(
+        result,
+        Err(Error::DuplicateCommitPosition { experiment: id, position: 0 }) if id == experiment
+    ));
+    assert_eq!(
+        store.experiment(experiment).unwrap().commits,
+        definition.commits
+    );
+    assert!(
+        !store
+            .read(|connection| Ok(
+                diesel::select(exists(commits::table.find("c"))).get_result::<bool>(connection)?
+            ))
+            .unwrap()
+    );
+}
+
+#[test]
+fn build_failures_and_completion_reject_unknown_targets_without_writing() {
+    let (mut store, definition, experiment) = database();
+    let commit = &definition.commits[0];
+    assert!(matches!(
+        store.record_build_failure(999, commit, "failed"),
+        Err(Error::UnknownExperiment(999))
+    ));
+    assert!(matches!(
+        store.try_complete_commit(999, &commit.id),
+        Err(Error::UnknownExperiment(999))
+    ));
+    let mut unknown = commit.clone();
+    unknown.id.0 = "unknown".into();
+    assert!(matches!(
+        store.record_build_failure(experiment, &unknown, "failed"),
+        Err(Error::UnregisteredCommit { .. })
+    ));
+    assert!(matches!(
+        store.try_complete_commit(experiment, &unknown.id),
+        Err(Error::UnregisteredCommit { .. })
+    ));
+    let mut wrong = commit.clone();
+    wrong.author = "changed".into();
+    assert!(matches!(
+        store.record_build_failure(experiment, &wrong, "failed"),
+        Err(Error::CommitMetadataMismatch(_))
+    ));
+    let count: i64 = store
+        .read(|connection| Ok(build_failures::table.count().get_result(connection)?))
+        .unwrap();
+    assert_eq!(count, 0);
 }
 
 #[test]

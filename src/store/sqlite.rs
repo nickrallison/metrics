@@ -28,6 +28,7 @@ use schema::{
 };
 
 /// Persistent typed history. Opening creates the parent directory and schema.
+/// Relationships and state transitions are validated here, not by SQL constraints.
 pub struct SqliteStore {
     connection: RefCell<SqliteConnection>,
 }
@@ -73,7 +74,10 @@ impl SqliteStore {
                 .get_result::<SchemaVersion>(connection)?
                 .user_version;
             match version {
-                0 => connection.batch_execute(include_str!("sqlite/schema.sql"))?,
+                0 => {
+                    connection.batch_execute(include_str!("sqlite/schema.sql"))?;
+                    connection.batch_execute(include_str!("sqlite/setup.sql"))?;
+                }
                 1 => {}
                 version => {
                     return Err(Error::Storage(format!(
@@ -227,6 +231,7 @@ impl Store for SqliteStore {
         definition: &ExperimentDefinition,
         existing: Option<ExperimentId>,
     ) -> Result<ExperimentId> {
+        validate_commits(&definition.commits)?;
         self.connection
             .get_mut()
             .immediate_transaction(|connection| {
@@ -250,12 +255,8 @@ impl Store for SqliteStore {
                         }
                         continue;
                     }
-                    let mut seen = std::collections::HashSet::new();
                     let mut position = saved.commits.len();
                     for commit in &definition.commits {
-                        if !seen.insert(&commit.id.0) {
-                            return Err(Error::Storage("duplicate selected commit".into()));
-                        }
                         insert_commit(connection, commit)?;
                         if saved.commits.iter().any(|saved| saved.id == commit.id) {
                             continue;
@@ -277,42 +278,69 @@ impl Store for SqliteStore {
 
     fn start_run(&mut self, start: &RunStart) -> Result<RecordId> {
         let position = sql_index(start.benchmark_index)?;
-        self.connection.get_mut().immediate_transaction(|connection| {
-            let (_, commit) = registered_commit(connection, start.experiment, &start.commit.id)?;
-            if commit != start.commit {
-                return Err(Error::Storage("attempt commit metadata differs from the frozen definition".into()));
-            }
-            let expected = benchmarks::table.find((start.experiment, position)).select(BenchmarkRow::as_select())
-                .first::<BenchmarkRow>(connection).optional()?
-                .ok_or_else(|| Error::Storage("workload is not registered in this experiment".into()))?.definition()?;
-            if start.benchmark != expected {
-                return Err(Error::Storage("attempt benchmark differs from the frozen definition".into()));
-            }
-            let source = match start.purpose {
-                RunPurpose::Measurement => None,
-                RunPurpose::Inspection { source } => {
-                    let valid: bool = diesel::select(exists(runs::table.find(source)
-                        .filter(runs::experiment_id.eq(start.experiment))
-                        .filter(runs::commit_id.eq(&start.commit.id.0))
-                        .filter(runs::benchmark_index.eq(position))
-                        .filter(runs::inspection_source.is_null())
-                        .filter(runs::finished_at.is_not_null()))).get_result(connection)?;
-                    if !valid {
-                        return Err(Error::Storage("inspection source must be a finished measurement of the same workload and commit".into()));
-                    }
-                    Some(source)
+        self.connection
+            .get_mut()
+            .immediate_transaction(|connection| {
+                let (_, commit) =
+                    registered_commit(connection, start.experiment, &start.commit.id)?;
+                if commit != start.commit {
+                    return Err(Error::CommitMetadataMismatch(start.commit.id.0.clone()));
                 }
-            };
-            let id = diesel::insert_into(runs::table).values((
-                runs::experiment_id.eq(start.experiment), runs::commit_id.eq(&start.commit.id.0),
-                runs::benchmark_index.eq(position), runs::started_at.eq(serde_json::to_string(&start.started_at)?),
-                runs::inspection_source.eq(source), runs::artifacts.eq(start.artifacts.as_ref().map(serde_json::to_string).transpose()?),
-            )).returning(runs::id).get_result(connection)?;
-            if source.is_none() {
-                set_completed(connection, start.experiment, &start.commit.id, false)?;
-            }
-            Ok(id)
-        })
+                let expected = benchmarks::table
+                    .find((start.experiment, position))
+                    .select(BenchmarkRow::as_select())
+                    .first::<BenchmarkRow>(connection)
+                    .optional()?
+                    .ok_or(Error::UnregisteredBenchmark {
+                        experiment: start.experiment,
+                        index: start.benchmark_index,
+                    })?
+                    .definition()?;
+                if start.benchmark != expected {
+                    return Err(Error::BenchmarkMismatch {
+                        experiment: start.experiment,
+                        index: start.benchmark_index,
+                    });
+                }
+                let source = match start.purpose {
+                    RunPurpose::Measurement => None,
+                    RunPurpose::Inspection { source } => {
+                        let valid: bool = diesel::select(exists(
+                            runs::table
+                                .find(source)
+                                .filter(runs::experiment_id.eq(start.experiment))
+                                .filter(runs::commit_id.eq(&start.commit.id.0))
+                                .filter(runs::benchmark_index.eq(position))
+                                .filter(runs::inspection_source.is_null())
+                                .filter(runs::finished_at.is_not_null()),
+                        ))
+                        .get_result(connection)?;
+                        if !valid {
+                            return Err(Error::InvalidInspectionSource(source));
+                        }
+                        Some(source)
+                    }
+                };
+                let id = diesel::insert_into(runs::table)
+                    .values((
+                        runs::experiment_id.eq(start.experiment),
+                        runs::commit_id.eq(&start.commit.id.0),
+                        runs::benchmark_index.eq(position),
+                        runs::started_at.eq(serde_json::to_string(&start.started_at)?),
+                        runs::inspection_source.eq(source),
+                        runs::artifacts.eq(start
+                            .artifacts
+                            .as_ref()
+                            .map(serde_json::to_string)
+                            .transpose()?),
+                    ))
+                    .returning(runs::id)
+                    .get_result(connection)?;
+                if source.is_none() {
+                    set_completed(connection, start.experiment, &start.commit.id, false)?;
+                }
+                Ok(id)
+            })
     }
 
     fn finish_run<O: Serialize>(
@@ -321,18 +349,29 @@ impl Store for SqliteStore {
         finished_at: SystemTime,
         outcome: &Outcome<O>,
     ) -> Result<()> {
-        let changed = diesel::update(runs::table.find(record).filter(runs::finished_at.is_null()))
-            .set((
-                runs::finished_at.eq(serde_json::to_string(&finished_at)?),
-                runs::outcome.eq(serde_json::to_string(outcome)?),
-            ))
-            .execute(self.connection.get_mut())?;
-        if changed != 1 {
-            return Err(Error::Storage(format!(
-                "attempt {record} does not exist or is already finished"
-            )));
-        }
-        Ok(())
+        self.connection
+            .get_mut()
+            .immediate_transaction(|connection| {
+                let changed =
+                    diesel::update(runs::table.find(record).filter(runs::finished_at.is_null()))
+                        .set((
+                            runs::finished_at.eq(serde_json::to_string(&finished_at)?),
+                            runs::outcome.eq(serde_json::to_string(outcome)?),
+                        ))
+                        .execute(connection)?;
+                if changed != 1 {
+                    return Err(
+                        if diesel::select(exists(runs::table.find(record)))
+                            .get_result::<bool>(connection)?
+                        {
+                            Error::RunAlreadyFinished(record)
+                        } else {
+                            Error::UnknownRun(record)
+                        },
+                    );
+                }
+                Ok(())
+            })
     }
 
     fn record_build_failure(
@@ -346,9 +385,7 @@ impl Store for SqliteStore {
             .immediate_transaction(|connection| {
                 let (_, expected) = registered_commit(connection, experiment, &commit.id)?;
                 if expected != *commit {
-                    return Err(Error::Storage(
-                        "build commit differs from the frozen definition".into(),
-                    ));
+                    return Err(Error::CommitMetadataMismatch(commit.id.0.clone()));
                 }
                 diesel::insert_into(build_failures::table)
                     .values((
@@ -486,6 +523,7 @@ fn insert_experiment(
     connection: &mut SqliteConnection,
     definition: &ExperimentDefinition,
 ) -> Result<ExperimentId> {
+    validate_commits(&definition.commits)?;
     let id = diesel::insert_into(experiments::table)
         .values(experiments::configuration.eq(serde_json::to_string(&definition.configuration)?))
         .returning(experiments::id)
@@ -522,10 +560,7 @@ fn insert_commit(connection: &mut SqliteConnection, commit: &Commit) -> Result<(
         .select(commits::metadata)
         .first(connection)?;
     if serde_json::from_str::<Commit>(&metadata)? != *commit {
-        return Err(Error::Storage(format!(
-            "conflicting metadata for commit {}",
-            commit.id.0
-        )));
+        return Err(Error::CommitMetadataMismatch(commit.id.0.clone()));
     }
     Ok(())
 }
@@ -536,11 +571,32 @@ fn register_commit(
     commit: &Commit,
     position: usize,
 ) -> Result<()> {
+    let index = sql_index(position)?;
+    if diesel::select(exists(
+        experiment_commits::table.find((experiment, &commit.id.0)),
+    ))
+    .get_result::<bool>(connection)?
+    {
+        return Err(Error::DuplicateCommit(commit.id.0.clone()));
+    }
+    if diesel::select(exists(
+        experiment_commits::table
+            .filter(experiment_commits::experiment_id.eq(experiment))
+            .filter(experiment_commits::position.eq(index)),
+    ))
+    .get_result::<bool>(connection)?
+    {
+        return Err(Error::DuplicateCommitPosition {
+            experiment,
+            position,
+        });
+    }
     diesel::insert_into(experiment_commits::table)
         .values((
             experiment_commits::experiment_id.eq(experiment),
             experiment_commits::commit_id.eq(&commit.id.0),
-            experiment_commits::position.eq(sql_index(position)?),
+            experiment_commits::position.eq(index),
+            experiment_commits::completed.eq(0_i64),
         ))
         .execute(connection)?;
     Ok(())
@@ -562,16 +618,23 @@ fn ensure_experiment(connection: &mut SqliteConnection, experiment: ExperimentId
     if !diesel::select(exists(experiments::table.find(experiment)))
         .get_result::<bool>(connection)?
     {
-        return Err(Error::Storage(format!(
-            "experiment {experiment} does not exist"
-        )));
+        return Err(Error::UnknownExperiment(experiment));
     }
     Ok(())
 }
 
 fn sql_index(index: usize) -> Result<i64> {
-    i64::try_from(index)
-        .map_err(|_| Error::Storage("workload position exceeds SQLite integer range".into()))
+    i64::try_from(index).map_err(|_| Error::PositionOutOfRange(index))
+}
+
+fn validate_commits(commits: &[Commit]) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for commit in commits {
+        if !seen.insert(&commit.id.0) {
+            return Err(Error::DuplicateCommit(commit.id.0.clone()));
+        }
+    }
+    Ok(())
 }
 
 fn registered_commit(
@@ -579,6 +642,7 @@ fn registered_commit(
     experiment: ExperimentId,
     commit: &CommitId,
 ) -> Result<(i64, Commit)> {
+    ensure_experiment(connection, experiment)?;
     let (position, metadata) = experiment_commits::table
         .inner_join(commits::table.on(commits::id.eq(experiment_commits::commit_id)))
         .filter(experiment_commits::experiment_id.eq(experiment))
@@ -586,11 +650,9 @@ fn registered_commit(
         .select((experiment_commits::position, commits::metadata))
         .first::<(i64, String)>(connection)
         .optional()?
-        .ok_or_else(|| {
-            Error::Storage(format!(
-                "commit {} is not registered in experiment {experiment}",
-                commit.0
-            ))
+        .ok_or_else(|| Error::UnregisteredCommit {
+            experiment,
+            commit: commit.0.clone(),
         })?;
     Ok((position, serde_json::from_str(&metadata)?))
 }

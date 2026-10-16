@@ -375,3 +375,91 @@ fn rejects_duplicate_attempts_and_inconsistent_history_metadata() {
     invalid.benchmarks.get_mut(&0).unwrap().version += 1;
     check(&invalid);
 }
+
+#[test]
+fn detailed_report_matches_script_statistics_without_pooling_repetitions() {
+    use crate::benchmarks::mcm::Quality;
+    let mut history = history(6);
+    let mut first = output(
+        &[2, 4],
+        &[1],
+        &[Some(1.0), Some(3.0)],
+        &[Some(2.0), Some(6.0)],
+    );
+    for value in &mut first.yosys_mcm.values {
+        value.adds_subs = 100;
+    }
+    first.paper.value.values[0].multipliers = 1;
+    record(&mut history, 0, 0, Outcome::Succeeded(first));
+    let mut second = output(&[10], &[4, 6], &[Some(12.0)], &[Some(10.0)]);
+    second.yosys_mcm.values[0].multipliers = 1;
+    for value in &mut second.paper.value.values {
+        value.adds_subs = 1000;
+    }
+    record(&mut history, 0, 1, Outcome::Succeeded(second));
+    let mut third = output(&[0], &[1], &[Some(0.0)], &[Some(0.0)]);
+    third.yosys_mcm.values[0].adds_subs = 2;
+    third.paper.value.values[0].adds_subs = 3;
+    record(&mut history, 0, 2, Outcome::Succeeded(third));
+    record(
+        &mut history,
+        0,
+        3,
+        Outcome::Succeeded(output(&[4], &[2], &[None], &[Some(4.0)])),
+    );
+    record(&mut history, 0, 4, Outcome::Failed("failed".into()));
+    let report = McmView.report(&history).unwrap();
+    let commit = &report.commits[0];
+    let summary = &commit.summary;
+    close(summary.yosys_across_workloads.mean_ms, 4.25);
+    close(summary.paper_across_workloads.mean_ms, 2.25);
+    close(summary.runtime_ratio, 17.0 / 9.0);
+    close(
+        summary.yosys_across_workloads.sample_stdev_ms,
+        (52.75_f64 / 3.0).sqrt(),
+    );
+    close(
+        summary.paper_across_workloads.sample_stdev_ms,
+        (10.75_f64 / 3.0).sqrt(),
+    );
+    assert_eq!(summary.yosys_across_workloads.samples, 4);
+    assert_eq!(
+        (
+            summary.quality.better,
+            summary.quality.same,
+            summary.quality.worse,
+            summary.quality.excluded
+        ),
+        (2, 1, 1, 2)
+    );
+    assert_eq!(
+        (
+            summary.area_smaller_or_equal,
+            summary.area_larger,
+            summary.area_excluded
+        ),
+        (2, 1, 3)
+    );
+    close(summary.average_area_savings_percent, 15.0);
+    assert_eq!(summary.area_savings_coverage.included, 2);
+    let Some(Outcome::Succeeded(first)) = &commit.workloads[0].outcome else {
+        panic!("missing workload")
+    };
+    assert_eq!(first.quality, Some(Quality::Better));
+    close(
+        first.yosys.as_ref().unwrap().timing.sample_stdev_ms,
+        2.0_f64.sqrt(),
+    );
+    assert_eq!(first.paper_reference, 1);
+    let empty = &report.commits[1].summary;
+    assert!(empty.runtime_ratio.is_none());
+    assert!(empty.yosys_across_workloads.mean_ms.is_none());
+    assert!(empty.yosys_across_workloads.sample_stdev_ms.is_none());
+    assert_eq!(empty.quality.excluded, 6);
+    let text = report.to_string();
+    assert!(text.contains("Stdev Yosys runtime across workloads"));
+    assert!(text.contains("yosys repetition stdev"));
+    assert!(text.contains("failed: failed"));
+    assert!(text.contains("no finished measurement"));
+    assert!(!serde_json::to_string(&report).unwrap().contains("NaN"));
+}

@@ -2,6 +2,7 @@
 
 ```sh
 cargo run --bin run_mcm
+cargo run --bin run_mcm -- --jobs 8
 cargo run --bin view_results
 cargo run --bin view_results -- --experiment 7 --metric area --json
 cargo run --bin run_mcm -- --output-dir output --name manual-mcm --keep-artifacts
@@ -14,6 +15,10 @@ executable and library come from `../yosys/tests/techmap/mcm`. Both must exist;
 the runner does not download them. A Yosys revision without `mcm` produces an
 unsupported outcome. Each invocation creates a new experiment and preserves old
 attempts, including failed scaffold runs.
+
+Yosys compilation uses the available CPU count by default. `--jobs N` sets a
+positive compiler job limit, capped at the available CPU count; see
+[Yosys builds](builds.md).
 
 For each workload and commit, the benchmark generates signed Verilog, profiles
 MCM, obtains the paper comparison, then synthesizes without and with MCM. Each

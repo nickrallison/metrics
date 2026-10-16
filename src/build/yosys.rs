@@ -1,6 +1,7 @@
 use std::{
     fs::{self, File, OpenOptions, TryLockError},
     io::Write,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -27,7 +28,8 @@ pub struct Yosys {
 ///
 /// Uses CMake Release when available, otherwise the historical Make build. CMake
 /// uses bundled dependencies with unit tests disabled; both builds include ABC.
-/// At most eight compiler jobs run at once. Git may fetch missing submodules.
+/// Compilation uses the available CPU count; `jobs` can lower that limit.
+/// Git may fetch missing submodules.
 ///
 /// One cache directory belongs to one canonical repository path and build recipe.
 /// Builders sharing a cache serialize access with an operating-system file lock.
@@ -35,6 +37,8 @@ pub struct Yosys {
 pub struct YosysBuilder {
     pub repository: PathBuf,
     pub cache_dir: PathBuf,
+    /// Maximum compiler jobs, capped at the available CPU count. `None` uses all.
+    pub jobs: Option<NonZeroUsize>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,7 +113,12 @@ impl Builder for YosysBuilder {
             .tempdir_in(&cache)?;
         let source = workspace.path().join("source");
         let build = workspace.path().join("build");
-        eprintln!("Building Yosys {id}; log: {}", log.path.display());
+        let available = std::thread::available_parallelism()?;
+        let jobs = self.jobs.unwrap_or(available).min(available).to_string();
+        eprintln!(
+            "Building Yosys {id} with {jobs} jobs; log: {}",
+            log.path.display()
+        );
         log.run(
             "clone",
             Command::new("git")
@@ -134,10 +143,6 @@ impl Builder for YosysBuilder {
                 "--checkout",
             ]),
         )?;
-        let jobs = std::thread::available_parallelism()?
-            .get()
-            .min(8)
-            .to_string();
         if source.join("CMakeLists.txt").is_file() {
             log.run(
                 "configure",

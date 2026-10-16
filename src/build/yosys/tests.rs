@@ -18,6 +18,7 @@ impl Fixture {
         let builder = YosysBuilder {
             repository,
             cache_dir: root.path().join("cache with spaces"),
+            jobs: None,
         };
         Self { root, builder }
     }
@@ -82,12 +83,30 @@ fn builds_selected_commits_without_worktree_edits_and_reuses_cache() {
     fixture.write("untracked", "keep me");
     let status = git_output(&fixture.builder.repository, &["status", "--porcelain"]).unwrap();
     let tool = fixture.builder.build(&first).unwrap();
+    let jobs = std::thread::available_parallelism().unwrap();
+    assert!(
+        fixture
+            .logs()
+            .contains(&format!("\"--parallel\" \"{jobs}\""))
+    );
     assert!(tool.executable.is_absolute());
     assert_eq!(execute(&tool).stdout, b"first\n");
+    fixture.builder.jobs = NonZeroUsize::new(usize::MAX);
     let cached = fixture.builder.build(&first).unwrap();
     assert_eq!(cached.executable, tool.executable);
     assert_eq!(fixture.logs().matches("configure:").count(), 1);
     let next = fixture.builder.build(&second).unwrap();
+    let logs = fixture.logs();
+    let compile_commands: Vec<_> = logs
+        .lines()
+        .filter(|line| line.starts_with("compile:"))
+        .collect();
+    assert_eq!(compile_commands.len(), 2);
+    assert!(
+        compile_commands
+            .iter()
+            .all(|line| line.contains(&format!("\"--parallel\" \"{jobs}\"")))
+    );
     assert_ne!(next.executable, tool.executable);
     assert_eq!(execute(&next).stdout, b"second\n");
     assert_eq!(
@@ -147,6 +166,7 @@ fn concurrent_builders_share_one_completed_installation() {
             let mut builder = YosysBuilder {
                 repository: fixture.builder.repository.clone(),
                 cache_dir: fixture.builder.cache_dir.clone(),
+                jobs: fixture.builder.jobs,
             };
             let commit = commit.clone();
             let barrier = barrier.clone();
@@ -237,6 +257,7 @@ fn cache_cannot_be_shared_between_repositories_or_recipes() {
     let mut other_builder = YosysBuilder {
         repository: other,
         cache_dir: fixture.builder.cache_dir.clone(),
+        jobs: None,
     };
     assert!(matches!(
         other_builder.build(&commit),
@@ -270,13 +291,14 @@ fn rejects_noncanonical_or_missing_revisions_before_creating_cache() {
 #[test]
 fn legacy_make_build_installs_into_private_prefix() {
     let mut fixture = Fixture::new();
+    fixture.builder.jobs = NonZeroUsize::new(1);
     fixture.cmake("legacy");
     fs::remove_file(fixture.builder.repository.join("CMakeLists.txt")).unwrap();
     fixture.write("Makefile", "all:\n\t@true\ninstall:\n\tmkdir -p \"$(PREFIX)/bin\" \"$(PREFIX)/share/yosys\"\n\tcp yosys yosys-abc \"$(PREFIX)/bin/\"\n\tchmod +x \"$(PREFIX)/bin/yosys\" \"$(PREFIX)/bin/yosys-abc\"\n\tcp simlib.v simcells.v \"$(PREFIX)/share/yosys/\"\n");
     let commit = fixture.commit();
     let tool = fixture.builder.build(&commit).unwrap();
     assert_eq!(execute(&tool).stdout, b"legacy\n");
-    assert!(fixture.logs().contains("make"));
+    assert!(fixture.logs().contains("\"make\" \"-j\" \"1\""));
 }
 
 #[test]
@@ -336,6 +358,7 @@ fn real_yosys_build() {
         cache_dir: std::env::var_os("BENCHMARKS_YOSYS_CACHE")
             .map(PathBuf::from)
             .unwrap_or_else(|| "output/builds/yosys".into()),
+        jobs: None,
     };
     let tool = builder.build(&commits[0]).unwrap();
     let cached = builder.build(&commits[0]).unwrap();

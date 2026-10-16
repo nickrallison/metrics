@@ -320,6 +320,7 @@ fn real_comparison_and_signed_arithmetic() {
     let mut builder = crate::build::YosysBuilder {
         repository,
         cache_dir: "output/builds/yosys".into(),
+        jobs: None,
     };
     let yosys = crate::build::Builder::build(&mut builder, &commit).unwrap();
     let mut benchmark = benchmark();

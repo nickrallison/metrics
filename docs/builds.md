@@ -10,8 +10,19 @@ Only Yosys's top-level submodules are initialized, matching its build instructio
 The fixed procedure uses CMake Release, bundled dependency libraries, and no unit
 tests. ABC and the default synthesis components are included. Revisions without
 CMakeLists.txt use their historical Makefile defaults. Both procedures install
-into the cache without sudo and use up to eight compiler jobs. Git and the native
-build dependencies required by the selected Yosys revision must be installed.
+into the cache without sudo. Compilation defaults to the available CPU count;
+set `YosysBuilder.jobs` to a nonzero count to lower the limit. The example runner
+accepts `--jobs N`. Both cap the requested count at the available CPU count,
+then pass it to CMake's `--parallel N` or Make's `-j N`:
+
+```sh
+cargo run --bin run_mcm -- --jobs 8
+```
+
+Changing the job count reuses existing cached installations. Commits still build
+one at a time, and compilation finishes before any benchmark is timed.
+Git and the native build dependencies required by the selected Yosys revision
+must be installed.
 Current CMake revisions require CMake 3.28+, a C++20 compiler, Make, Flex, Bison,
 and the libraries described in the Yosys README. Missing commands, dependencies,
 and compilation failures are reported with the stage and a persistent log path.

@@ -59,15 +59,19 @@ impl SqliteStore {
         Ok(Self { connection })
     }
 
-    /// Load the frozen definitions in their original workload/revision order.
+    /// Load original configuration, frozen workloads, and registered revisions.
     pub fn experiment(&self, id: ExperimentId) -> Result<ExperimentDefinition> {
-        ensure_experiment(&self.connection, id)?;
-        let configuration: String = self.connection.query_row(
+        Self::load_experiment(&self.connection, id)
+    }
+
+    fn load_experiment(connection: &Connection, id: ExperimentId) -> Result<ExperimentDefinition> {
+        ensure_experiment(connection, id)?;
+        let configuration: String = connection.query_row(
             "SELECT configuration FROM experiments WHERE id = ?1",
             [id],
             |row| row.get(0),
         )?;
-        let mut statement = self.connection.prepare(
+        let mut statement = connection.prepare(
             "SELECT kind, version, parameters FROM benchmarks WHERE experiment_id = ?1 ORDER BY position",
         )?;
         let rows = statement.query_map([id], |row| {
@@ -86,7 +90,7 @@ impl SqliteStore {
                 parameters: serde_json::from_str(&parameters)?,
             });
         }
-        let mut statement = self.connection.prepare(
+        let mut statement = connection.prepare(
             "SELECT c.metadata FROM experiment_commits ec JOIN commits c ON c.id = ec.commit_id
              WHERE ec.experiment_id = ?1 ORDER BY ec.position",
         )?;
@@ -99,6 +103,99 @@ impl SqliteStore {
             configuration: serde_json::from_str(&configuration)?,
             benchmarks,
             commits,
+        })
+    }
+
+    /// All finished measurement attempts, including superseded results.
+    /// Use `history` for the latest finished result per workload and commit.
+    pub fn attempts<O: DeserializeOwned>(&self, query: &HistoryQuery) -> Result<History<O>> {
+        self.history_selection(query, false)
+    }
+
+    fn history_selection<O: DeserializeOwned>(
+        &self,
+        query: &HistoryQuery,
+        latest_only: bool,
+    ) -> Result<History<O>> {
+        let definition = self.experiment(query.experiment)?;
+        let valid_schema = definition.benchmarks.iter().any(|benchmark| {
+            benchmark.kind == query.benchmark_kind && benchmark.version == query.benchmark_version
+        });
+        if !valid_schema {
+            return Err(Error::Storage(
+                "benchmark kind/version is not registered in this experiment".into(),
+            ));
+        }
+        let latest = if latest_only {
+            "AND r.id = (SELECT MAX(id) FROM runs WHERE experiment_id = r.experiment_id
+                AND commit_id = r.commit_id AND benchmark_index = r.benchmark_index
+                AND inspection_source IS NULL AND finished_at IS NOT NULL)"
+        } else {
+            ""
+        };
+        let mut statement = self.connection.prepare(&format!(
+            "{RUN_SELECT} WHERE r.experiment_id = ?1 AND b.kind = ?2 AND b.version = ?3
+             AND r.inspection_source IS NULL AND r.finished_at IS NOT NULL
+             {latest}
+             ORDER BY ec.position, r.benchmark_index, r.id",
+        ))?;
+        let rows = statement.query_map(
+            params![
+                query.experiment,
+                query.benchmark_kind,
+                query.benchmark_version
+            ],
+            RawRun::from_row,
+        )?;
+        let mut records = Vec::new();
+        for row in rows {
+            let row = row?;
+            let start = row.start(query.experiment)?;
+            if query
+                .benchmark_parameters
+                .as_ref()
+                .is_some_and(|filter| *filter != start.benchmark.parameters)
+            {
+                continue;
+            }
+            let record = RunRecord {
+                experiment: start.experiment,
+                commit: start.commit,
+                benchmark_index: start.benchmark_index,
+                benchmark: start.benchmark,
+                started_at: start.started_at,
+                finished_at: serde_json::from_str(
+                    row.finished_at
+                        .as_deref()
+                        .ok_or_else(|| Error::Storage("missing finish time".into()))?,
+                )?,
+                purpose: start.purpose,
+                artifacts: start.artifacts,
+                outcome: serde_json::from_str(
+                    row.outcome
+                        .as_deref()
+                        .ok_or_else(|| Error::Storage("missing outcome".into()))?,
+                )?,
+            };
+            records.push(HistoryEntry { id: row.id, record });
+        }
+        let benchmarks = definition
+            .benchmarks
+            .into_iter()
+            .enumerate()
+            .filter(|(_, benchmark)| {
+                benchmark.kind == query.benchmark_kind
+                    && benchmark.version == query.benchmark_version
+                    && query
+                        .benchmark_parameters
+                        .as_ref()
+                        .is_none_or(|filter| *filter == benchmark.parameters)
+            })
+            .collect();
+        Ok(History {
+            commits: definition.commits,
+            benchmarks,
+            records,
         })
     }
 
@@ -150,44 +247,68 @@ impl ReferenceCache for SqliteStore {
 }
 
 impl Store for SqliteStore {
+    fn prepare_experiment(
+        &mut self,
+        definition: &ExperimentDefinition,
+        existing: Option<ExperimentId>,
+    ) -> Result<ExperimentId> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let candidates = match existing {
+            Some(id) => vec![id],
+            None => {
+                let mut statement =
+                    transaction.prepare("SELECT id FROM experiments ORDER BY id DESC")?;
+                statement
+                    .query_map([], |row| row.get(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            }
+        };
+        for id in candidates {
+            let saved = Self::load_experiment(&transaction, id)?;
+            if saved.benchmarks != definition.benchmarks
+                || experiment_identity(&saved.configuration)
+                    != experiment_identity(&definition.configuration)
+            {
+                if existing.is_some() {
+                    return Err(Error::Storage(format!(
+                        "experiment {id} has different benchmark or suite settings"
+                    )));
+                }
+                continue;
+            }
+            let mut seen = std::collections::HashSet::new();
+            let mut position = saved.commits.len();
+            for commit in &definition.commits {
+                if !seen.insert(&commit.id.0) {
+                    return Err(Error::Storage("duplicate selected commit".into()));
+                }
+                insert_commit(&transaction, commit)?;
+                if saved.commits.iter().any(|saved| saved.id == commit.id) {
+                    continue;
+                }
+                transaction.execute(
+                    "INSERT INTO experiment_commits(experiment_id, commit_id, position) VALUES (?1, ?2, ?3)",
+                    params![id, commit.id.0, sql_index(position)?],
+                )?;
+                position += 1;
+            }
+            transaction.commit()?;
+            return Ok(id);
+        }
+        // Keep explicit registration available for callers that want a new
+        // independent experiment, even when its configuration is identical.
+        let id = insert_experiment(&transaction, definition)?;
+        transaction.commit()?;
+        Ok(id)
+    }
+
     fn register_experiment(&mut self, definition: &ExperimentDefinition) -> Result<ExperimentId> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute(
-            "INSERT INTO experiments(configuration) VALUES (?1)",
-            [serde_json::to_string(&definition.configuration)?],
-        )?;
-        let id = transaction.last_insert_rowid();
-        for (position, benchmark) in definition.benchmarks.iter().enumerate() {
-            let position = sql_index(position)?;
-            transaction.execute(
-                "INSERT INTO benchmarks(experiment_id, position, kind, version, parameters) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![id, position, benchmark.kind, benchmark.version, serde_json::to_string(&benchmark.parameters)?],
-            )?;
-        }
-        for (position, commit) in definition.commits.iter().enumerate() {
-            let position = sql_index(position)?;
-            transaction.execute(
-                "INSERT INTO commits(id, metadata) VALUES (?1, ?2) ON CONFLICT(id) DO NOTHING",
-                params![commit.id.0, serde_json::to_string(commit)?],
-            )?;
-            let metadata: String = transaction.query_row(
-                "SELECT metadata FROM commits WHERE id = ?1",
-                [&commit.id.0],
-                |row| row.get(0),
-            )?;
-            if serde_json::from_str::<Commit>(&metadata)? != *commit {
-                return Err(Error::Storage(format!(
-                    "conflicting metadata for commit {}",
-                    commit.id.0
-                )));
-            }
-            transaction.execute(
-                "INSERT INTO experiment_commits(experiment_id, commit_id, position) VALUES (?1, ?2, ?3)",
-                params![id, commit.id.0, position],
-            )?;
-        }
+        let id = insert_experiment(&transaction, definition)?;
         transaction.commit()?;
         Ok(id)
     }
@@ -293,19 +414,20 @@ impl Store for SqliteStore {
     }
 
     fn complete_commit(&mut self, experiment: ExperimentId, commit: &CommitId) -> Result<()> {
+        if self.try_complete_commit(experiment, commit)? {
+            Ok(())
+        } else {
+            Err(Error::Storage(
+                "the latest measurement of every workload must be finished".into(),
+            ))
+        }
+    }
+
+    fn try_complete_commit(&mut self, experiment: ExperimentId, commit: &CommitId) -> Result<bool> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let (position, _) = registered_commit(&transaction, experiment, commit)?;
-        let earlier_incomplete: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM experiment_commits WHERE experiment_id = ?1 AND position < ?2 AND completed = 0)",
-            params![experiment, position], |row| row.get(0),
-        )?;
-        if earlier_incomplete {
-            return Err(Error::Storage(
-                "an earlier selected commit is incomplete".into(),
-            ));
-        }
+        registered_commit(&transaction, experiment, commit)?;
         let incomplete: bool = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM benchmarks b LEFT JOIN runs r ON r.id = (
                 SELECT MAX(id) FROM runs WHERE experiment_id = b.experiment_id AND commit_id = ?2
@@ -315,92 +437,16 @@ impl Store for SqliteStore {
             |row| row.get(0),
         )?;
         if incomplete {
-            return Err(Error::Storage(
-                "the latest measurement of every workload must be finished".into(),
-            ));
+            return Ok(false);
         }
         transaction.execute("UPDATE experiment_commits SET completed = 1 WHERE experiment_id = ?1 AND commit_id = ?2",
             params![experiment, commit.0])?;
         transaction.commit()?;
-        Ok(())
+        Ok(true)
     }
 
     fn history<O: DeserializeOwned>(&self, query: &HistoryQuery) -> Result<History<O>> {
-        let definition = self.experiment(query.experiment)?;
-        let valid_schema = definition.benchmarks.iter().any(|benchmark| {
-            benchmark.kind == query.benchmark_kind && benchmark.version == query.benchmark_version
-        });
-        if !valid_schema {
-            return Err(Error::Storage(
-                "benchmark kind/version is not registered in this experiment".into(),
-            ));
-        }
-        let mut statement = self.connection.prepare(&format!(
-            "{RUN_SELECT} WHERE r.experiment_id = ?1 AND b.kind = ?2 AND b.version = ?3
-             AND r.inspection_source IS NULL AND r.finished_at IS NOT NULL
-             AND r.id = (SELECT MAX(id) FROM runs WHERE experiment_id = r.experiment_id
-                AND commit_id = r.commit_id AND benchmark_index = r.benchmark_index
-                AND inspection_source IS NULL AND finished_at IS NOT NULL)
-             ORDER BY ec.position, r.benchmark_index",
-        ))?;
-        let rows = statement.query_map(
-            params![
-                query.experiment,
-                query.benchmark_kind,
-                query.benchmark_version
-            ],
-            RawRun::from_row,
-        )?;
-        let mut records = Vec::new();
-        for row in rows {
-            let row = row?;
-            let start = row.start(query.experiment)?;
-            if query
-                .benchmark_parameters
-                .as_ref()
-                .is_some_and(|filter| *filter != start.benchmark.parameters)
-            {
-                continue;
-            }
-            let record = RunRecord {
-                experiment: start.experiment,
-                commit: start.commit,
-                benchmark_index: start.benchmark_index,
-                benchmark: start.benchmark,
-                started_at: start.started_at,
-                finished_at: serde_json::from_str(
-                    row.finished_at
-                        .as_deref()
-                        .ok_or_else(|| Error::Storage("missing finish time".into()))?,
-                )?,
-                purpose: start.purpose,
-                artifacts: start.artifacts,
-                outcome: serde_json::from_str(
-                    row.outcome
-                        .as_deref()
-                        .ok_or_else(|| Error::Storage("missing outcome".into()))?,
-                )?,
-            };
-            records.push(HistoryEntry { id: row.id, record });
-        }
-        let benchmarks = definition
-            .benchmarks
-            .into_iter()
-            .enumerate()
-            .filter(|(_, benchmark)| {
-                benchmark.kind == query.benchmark_kind
-                    && benchmark.version == query.benchmark_version
-                    && query
-                        .benchmark_parameters
-                        .as_ref()
-                        .is_none_or(|filter| *filter == benchmark.parameters)
-            })
-            .collect();
-        Ok(History {
-            commits: definition.commits,
-            benchmarks,
-            records,
-        })
+        self.history_selection(query, true)
     }
 
     fn last_complete(&self, experiment: ExperimentId) -> Result<Option<CommitId>> {
@@ -413,6 +459,60 @@ impl Store for SqliteStore {
         ).optional()?;
         Ok(id.map(CommitId))
     }
+}
+
+fn experiment_identity(configuration: &serde_json::Value) -> serde_json::Value {
+    let mut identity = configuration.clone();
+    if let Some(object) = identity.as_object_mut() {
+        for key in ["output", "artifacts", "revisions", "run_directory"] {
+            object.remove(key);
+        }
+    }
+    identity
+}
+
+fn insert_experiment(
+    connection: &Connection,
+    definition: &ExperimentDefinition,
+) -> Result<ExperimentId> {
+    connection.execute(
+        "INSERT INTO experiments(configuration) VALUES (?1)",
+        [serde_json::to_string(&definition.configuration)?],
+    )?;
+    let id = connection.last_insert_rowid();
+    for (position, benchmark) in definition.benchmarks.iter().enumerate() {
+        connection.execute(
+            "INSERT INTO benchmarks(experiment_id, position, kind, version, parameters) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id, sql_index(position)?, benchmark.kind, benchmark.version, serde_json::to_string(&benchmark.parameters)?],
+        )?;
+    }
+    for (position, commit) in definition.commits.iter().enumerate() {
+        insert_commit(connection, commit)?;
+        connection.execute(
+            "INSERT INTO experiment_commits(experiment_id, commit_id, position) VALUES (?1, ?2, ?3)",
+            params![id, commit.id.0, sql_index(position)?],
+        )?;
+    }
+    Ok(id)
+}
+
+fn insert_commit(connection: &Connection, commit: &Commit) -> Result<()> {
+    connection.execute(
+        "INSERT INTO commits(id, metadata) VALUES (?1, ?2) ON CONFLICT(id) DO NOTHING",
+        params![commit.id.0, serde_json::to_string(commit)?],
+    )?;
+    let metadata: String = connection.query_row(
+        "SELECT metadata FROM commits WHERE id = ?1",
+        [&commit.id.0],
+        |row| row.get(0),
+    )?;
+    if serde_json::from_str::<Commit>(&metadata)? != *commit {
+        return Err(Error::Storage(format!(
+            "conflicting metadata for commit {}",
+            commit.id.0
+        )));
+    }
+    Ok(())
 }
 
 fn ensure_experiment(connection: &Connection, experiment: ExperimentId) -> Result<()> {

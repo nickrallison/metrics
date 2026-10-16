@@ -171,6 +171,25 @@ fn cli_projects_sqlite_history_selects_latest_experiment_and_reports_failures() 
     assert!(rendered.contains("failed: comparison failed"));
     assert!(!rendered.contains("NaN"));
 
+    let mut retry = failed.clone();
+    retry.experiment = first;
+    retry.outcome = Outcome::Succeeded(output);
+    retry.artifacts = Some("/tmp/rerun-artifacts".into());
+    let retry_id = store.append(&retry).unwrap();
+    let attempts: Value = serde_json::from_str(&text(&view(
+        &path,
+        &["--experiment", &first_id, "--attempts", "--json"],
+    )))
+    .unwrap();
+    let records = attempts["finished"]["records"].as_array().unwrap();
+    assert_eq!(records.len(), 2); // Includes the superseded result, excludes inspection.
+    assert_eq!(records[0]["id"], source);
+    assert_eq!(records[1]["id"], retry_id);
+    assert_eq!(attempts["unfinished"].as_array().unwrap().len(), 1);
+    let attempts = text(&view(&path, &["--experiment", &first_id, "--attempts"]));
+    assert!(attempts.contains("unfinished"));
+    assert!(attempts.contains("artifacts: /tmp/rerun-artifacts"));
+
     // A commit stopped before any measurement still has an explicit missing point.
     let unmeasured = store.register_experiment(&definition).unwrap();
     store

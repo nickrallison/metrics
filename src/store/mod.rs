@@ -48,7 +48,8 @@ pub struct BenchmarkDefinition {
     pub parameters: serde_json::Value,
 }
 
-/// Frozen configuration, workload order, and resolved revision order for a run.
+/// Original configuration and frozen workloads. New commits append to the
+/// registered revision order when reusing an experiment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExperimentDefinition {
     pub configuration: serde_json::Value,
@@ -124,6 +125,21 @@ pub trait Store: ReferenceCache {
     /// This does not implicitly resume or merge a previous experiment.
     fn register_experiment(&mut self, definition: &ExperimentDefinition) -> Result<ExperimentId>;
 
+    /// Reuse a compatible experiment, appending newly selected commits. An
+    /// explicit ID must match; stores without reuse support can register anew.
+    fn prepare_experiment(
+        &mut self,
+        definition: &ExperimentDefinition,
+        existing: Option<ExperimentId>,
+    ) -> Result<ExperimentId> {
+        if existing.is_some() {
+            return Err(crate::Error::Unsupported(
+                "experiment reuse in this store".into(),
+            ));
+        }
+        self.register_experiment(definition)
+    }
+
     fn start_run(&mut self, start: &RunStart) -> Result<RecordId>;
 
     /// Finalize the same attempt; failure must leave it visibly unfinished.
@@ -155,9 +171,16 @@ pub trait Store: ReferenceCache {
         reason: &str,
     ) -> Result<()>;
 
-    /// Verify terminal outcomes for every frozen workload before advancing the
-    /// processed prefix. Failures/unsupported count; unfinished attempts do not.
+    /// Verify terminal outcomes for every frozen workload and mark this commit
+    /// complete. `last_complete` derives the processed prefix independently.
     fn complete_commit(&mut self, experiment: ExperimentId, commit: &CommitId) -> Result<()>;
+
+    /// Mark a commit complete if all workloads have finished latest attempts.
+    /// Partial workload reruns can leave a commit incomplete without failing.
+    fn try_complete_commit(&mut self, experiment: ExperimentId, commit: &CommitId) -> Result<bool> {
+        self.complete_commit(experiment, commit)?;
+        Ok(true)
+    }
 
     /// Validate the stored kind/version before deserializing the selected output.
     fn history<O: DeserializeOwned>(&self, query: &HistoryQuery) -> Result<History<O>>;

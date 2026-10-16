@@ -15,8 +15,8 @@
 //! A recent individual result is not a completion marker. Failed measurements can
 //! be explicitly rerun; append attempts rather than overwriting history. Reruns
 //! must not become extra independent repetition samples. Automatic retries and a
-//! job graph are deferred. Registration currently starts a new experiment;
-//! automatic resume and input digest verification are not implemented yet.
+//! job graph are deferred. Compatible SQLite experiments are reused, retaining
+//! previous attempts. Input digest verification is not implemented yet.
 
 use std::{
     fs,
@@ -49,11 +49,26 @@ pub struct Experiment<S: Suite> {
     pub artifacts: ArtifactPolicy,
 }
 
+/// Execution choices do not change the frozen benchmark collection.
+#[derive(Debug, Default)]
+pub struct RunOptions {
+    /// Pin an existing experiment; otherwise reuse a compatible one if available.
+    pub experiment: Option<ExperimentId>,
+    /// Original zero-based workload positions. Empty means every workload.
+    pub workloads: Vec<usize>,
+}
+
+#[derive(Debug)]
+pub struct RunSummary {
+    pub experiment: ExperimentId,
+    pub run_directory: PathBuf,
+}
+
 /// Freeze the suite, resolve commits, then build, run, and record sequentially.
 ///
 /// Benchmark failures are recorded and execution continues. Build, input setup,
 /// workspace, and storage errors stop execution without completing that commit.
-/// Returns the experiment ID when all comparisons were processed. Individual
+/// Returns the reused or newly registered experiment ID. Individual
 /// comparisons may have failed; their outcomes remain available under this ID.
 pub fn run<S, B, D>(
     experiment: &Experiment<S>,
@@ -65,11 +80,27 @@ where
     B: Builder<Tool = S::Tool>,
     D: Store,
 {
-    let benchmarks = experiment.suite.benchmarks()?;
-    let commits = experiment.history.resolve(&experiment.revisions)?;
-    run_resolved(experiment, benchmarks, commits, builder, store)
+    Ok(run_with_options(experiment, builder, store, &RunOptions::default())?.experiment)
 }
 
+/// Execute selected workloads as new measurement attempts in a stable experiment.
+pub fn run_with_options<S, B, D>(
+    experiment: &Experiment<S>,
+    builder: &mut B,
+    store: &mut D,
+    options: &RunOptions,
+) -> Result<RunSummary>
+where
+    S: Suite,
+    B: Builder<Tool = S::Tool>,
+    D: Store,
+{
+    let benchmarks = experiment.suite.benchmarks()?;
+    let commits = experiment.history.resolve(&experiment.revisions)?;
+    execute(experiment, benchmarks, commits, builder, store, options)
+}
+
+#[cfg(test)]
 fn run_resolved<S, B, D>(
     experiment: &Experiment<S>,
     benchmarks: Vec<S::Benchmark>,
@@ -82,6 +113,38 @@ where
     B: Builder<Tool = S::Tool>,
     D: Store,
 {
+    Ok(execute(
+        experiment,
+        benchmarks,
+        commits,
+        builder,
+        store,
+        &RunOptions::default(),
+    )?
+    .experiment)
+}
+
+fn execute<S, B, D>(
+    experiment: &Experiment<S>,
+    benchmarks: Vec<S::Benchmark>,
+    commits: Vec<Commit>,
+    builder: &mut B,
+    store: &mut D,
+    options: &RunOptions,
+) -> Result<RunSummary>
+where
+    S: Suite,
+    B: Builder<Tool = S::Tool>,
+    D: Store,
+{
+    let mut selected = std::collections::HashSet::new();
+    for &index in &options.workloads {
+        if index >= benchmarks.len() || !selected.insert(index) {
+            return Err(Error::Benchmark(format!(
+                "invalid or duplicate workload index {index}"
+            )));
+        }
+    }
     let definitions = benchmarks
         .iter()
         .map(|benchmark| {
@@ -95,11 +158,23 @@ where
     let run_directory = experiment.output.create_run_directory()?;
     let mut configuration = serde_json::to_value(experiment)?;
     configuration["run_directory"] = serde_json::to_value(&run_directory)?;
-    let experiment_id = store.register_experiment(&ExperimentDefinition {
-        configuration,
-        benchmarks: definitions.clone(),
-        commits: commits.clone(),
-    })?;
+    let experiment_id = store.prepare_experiment(
+        &ExperimentDefinition {
+            configuration: configuration.clone(),
+            benchmarks: definitions.clone(),
+            commits: commits.clone(),
+        },
+        options.experiment,
+    )?;
+    // Keep invocation settings separately from the experiment's original
+    // configuration, including the requested policy when no raw files are kept.
+    configuration["experiment_id"] = serde_json::to_value(experiment_id)?;
+    configuration["workloads"] = serde_json::to_value(&options.workloads)?;
+    fs::write(
+        run_directory.join("run.json"),
+        serde_json::to_vec_pretty(&configuration)?,
+    )?;
+    let reference_scope = format!("experiment:{experiment_id}:run:{}", run_directory.display());
 
     for commit in commits {
         let tool = match builder.build(&commit) {
@@ -113,6 +188,9 @@ where
         for (benchmark_index, (benchmark, definition)) in
             benchmarks.iter().zip(&definitions).enumerate()
         {
+            if !selected.is_empty() && !selected.contains(&benchmark_index) {
+                continue;
+            }
             let retain = experiment.artifacts.logs
                 || experiment.artifacts.scripts
                 || experiment.artifacts.netlists;
@@ -132,7 +210,7 @@ where
             // workspaces keep their files if execution or finalization fails.
             let outcome = {
                 let mut context = RunContext::new(path, experiment.artifacts, store);
-                context.reference_scope = Some(format!("experiment:{experiment_id}"));
+                context.reference_scope = Some(reference_scope.clone());
                 match benchmark.run(&input, &mut context) {
                     Ok(output) => Outcome::Succeeded(output),
                     Err(Error::Unsupported(reason)) => Outcome::Unsupported(reason),
@@ -152,9 +230,12 @@ where
             }
             store.finish_run(record, SystemTime::now(), &outcome)?;
         }
-        store.complete_commit(experiment_id, &commit.id)?;
+        store.try_complete_commit(experiment_id, &commit.id)?;
     }
-    Ok(experiment_id)
+    Ok(RunSummary {
+        experiment: experiment_id,
+        run_directory,
+    })
 }
 
 enum Workspace {

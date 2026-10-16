@@ -4,12 +4,12 @@ use benchmarks::{
     Error, Result,
     benchmarks::mcm::{self, McmMetric, McmOutput, McmSelection, McmView},
     output::OutputLayout,
-    store::{HistoryQuery, SqliteStore, Store},
+    store::{HistoryQuery, Outcome, SqliteStore, Store},
     view::{View, ViewData},
 };
 
 const HELP: &str =
-    "Usage: view_results [--output-dir PATH] [--name NAME] [--database PATH] [--experiment ID] [--metric runtime|area|all] [--details] [--json]
+    "Usage: view_results [--output-dir PATH] [--name NAME] [--database PATH] [--experiment ID] [--metric runtime|area|all] [--details | --attempts] [--json]
 
 Defaults: output/mcm/database.sqlite, latest registered experiment, both metrics, text output.
 Workload indices refer to positions in the frozen benchmark collection.
@@ -22,6 +22,7 @@ struct Options {
     metrics: Vec<McmMetric>,
     json: bool,
     details: bool,
+    attempts: bool,
 }
 
 impl Options {
@@ -36,6 +37,7 @@ impl Options {
             metrics: vec![McmMetric::RuntimeRatio, McmMetric::AreaSavings],
             json: false,
             details: false,
+            attempts: false,
         };
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -45,6 +47,7 @@ impl Options {
                 }
                 "--json" => options.json = true,
                 "--details" => options.details = true,
+                "--attempts" => options.attempts = true,
                 "--database" => options.database = Some(argument(&mut args, &arg)?.into()),
                 "--output-dir" => options.output.output_dir = argument(&mut args, &arg)?.into(),
                 "--name" => options.output.experiment = argument(&mut args, &arg)?,
@@ -75,6 +78,9 @@ impl Options {
                     )));
                 }
             }
+        }
+        if options.details && options.attempts {
+            return Err(invalid_argument("use either --details or --attempts"));
         }
         Ok(Some(options))
     }
@@ -131,6 +137,48 @@ fn run() -> Result<()> {
         benchmark_version: version,
         benchmark_parameters: None,
     };
+    if options.attempts {
+        let attempts = store.attempts::<McmOutput>(&query)?;
+        let unfinished = store.unfinished_runs(experiment)?;
+        if options.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &serde_json::json!({"finished": attempts, "unfinished": unfinished})
+                )?
+            );
+        } else {
+            println!("Experiment {experiment}\n");
+            println!("commit        workload  attempt  record  outcome");
+            let mut counts = std::collections::BTreeMap::new();
+            for entry in &attempts.records {
+                let record = &entry.record;
+                let number = counts
+                    .entry((&record.commit.id.0, record.benchmark_index))
+                    .or_insert(0);
+                *number += 1;
+                let outcome = match &record.outcome {
+                    Outcome::Succeeded(_) => "succeeded".to_owned(),
+                    Outcome::Failed(reason) => format!("failed: {reason}"),
+                    Outcome::Unsupported(reason) => format!("unsupported: {reason}"),
+                };
+                println!(
+                    "{:.12}  {:>8}  {:>7}  {:>6}  {outcome}",
+                    record.commit.id.0, record.benchmark_index, number, entry.id
+                );
+                if let Some(path) = &record.artifacts {
+                    println!("  artifacts: {}", path.display());
+                }
+            }
+            for (id, start) in unfinished {
+                println!(
+                    "{:.12}  {:>8}        -  {:>6}  unfinished",
+                    start.commit.id.0, start.benchmark_index, id
+                );
+            }
+        }
+        return Ok(());
+    }
     let history = store.history::<McmOutput>(&query)?;
     if options.details {
         let report = McmView.report(&history)?;

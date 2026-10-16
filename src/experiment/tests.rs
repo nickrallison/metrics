@@ -253,7 +253,11 @@ impl Harness {
                     fail_input: false,
                     events: events.clone(),
                 },
-                artifacts: ArtifactPolicy::default(),
+                artifacts: ArtifactPolicy {
+                    logs: false,
+                    scripts: false,
+                    netlists: false,
+                },
             },
             builder: TestBuilder {
                 fail_commit: None,
@@ -534,4 +538,86 @@ fn experiment_records_real_sqlite_history_and_completion() {
     ));
     assert_eq!(store.last_complete(1).unwrap(), Some(CommitId("b".into())));
     assert!(store.unfinished_runs(1).unwrap().is_empty());
+}
+
+#[test]
+fn selected_rerun_changes_policy_without_losing_results_or_allocating_an_experiment() {
+    use crate::store::SqliteStore;
+    let mut h = Harness::new(vec![Behavior::Succeed, Behavior::Succeed]);
+    let mut store = SqliteStore::open(":memory:").unwrap();
+    let commits: Vec<_> = ["a", "b"]
+        .into_iter()
+        .map(|id| Commit {
+            id: CommitId(id.into()),
+            committed_at: UNIX_EPOCH,
+            author: "author".into(),
+            commit_message: id.into(),
+        })
+        .collect();
+    let first = execute(
+        &h.experiment,
+        h.experiment.suite.benchmarks().unwrap(),
+        commits.clone(),
+        &mut h.builder,
+        &mut store,
+        &RunOptions::default(),
+    )
+    .unwrap();
+    h.experiment.artifacts = ArtifactPolicy {
+        logs: true,
+        scripts: true,
+        netlists: true,
+    };
+    let second = execute(
+        &h.experiment,
+        h.experiment.suite.benchmarks().unwrap(),
+        vec![commits[1].clone()],
+        &mut h.builder,
+        &mut store,
+        &RunOptions {
+            experiment: Some(first.experiment),
+            workloads: vec![1],
+        },
+    )
+    .unwrap();
+    assert_eq!(first.experiment, second.experiment);
+    assert_eq!(store.latest_experiment().unwrap(), Some(first.experiment));
+    assert_ne!(first.run_directory, second.run_directory);
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(second.run_directory.join("run.json")).unwrap()).unwrap();
+    assert_eq!(manifest["artifacts"]["netlists"], true);
+    assert_eq!(manifest["workloads"], serde_json::json!([1]));
+    let query = HistoryQuery {
+        experiment: first.experiment,
+        benchmark_kind: "test".into(),
+        benchmark_version: 1,
+        benchmark_parameters: None,
+    };
+    let attempts = store.attempts::<usize>(&query).unwrap();
+    assert_eq!(attempts.records.len(), 5);
+    assert_eq!(
+        attempts
+            .records
+            .iter()
+            .filter(|entry| entry.record.commit.id.0 == "b" && entry.record.benchmark_index == 1)
+            .count(),
+        2
+    );
+    let latest = store.history::<usize>(&query).unwrap();
+    assert_eq!(latest.records.len(), 4);
+    let retried = &latest.records[3];
+    assert!(retried.id > latest.records[2].id);
+    assert!(
+        retried
+            .record
+            .artifacts
+            .as_ref()
+            .unwrap()
+            .join("probe")
+            .is_file()
+    );
+    assert_eq!(
+        store.last_complete(first.experiment).unwrap(),
+        Some(commits[1].id.clone())
+    );
 }

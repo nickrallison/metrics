@@ -1,6 +1,12 @@
 use std::{num::NonZeroU32, os::unix::fs::PermissionsExt, time::Duration};
 
 use super::*;
+
+const NO_ARTIFACTS: ArtifactPolicy = ArtifactPolicy {
+    logs: false,
+    scripts: false,
+    netlists: false,
+};
 use crate::{
     benchmark::{ArtifactPolicy, Benchmark},
     benchmarks::mcm::{McmOptions, PaperTool},
@@ -117,7 +123,7 @@ impl Fixture {
 #[test]
 fn complete_comparison_keeps_repetitions_and_reuses_only_compatible_references() {
     let mut fixture = Fixture::new();
-    let (first, workspace) = fixture.run(Some("experiment:1"), ArtifactPolicy::default());
+    let (first, workspace) = fixture.run(Some("experiment:1"), NO_ARTIFACTS);
     assert_eq!(first.yosys_mcm.values.len(), 2);
     assert_eq!(first.paper.value.values.len(), 2);
     assert_eq!(first.synth_without_mcm.values.len(), 2);
@@ -133,13 +139,13 @@ fn complete_comparison_keeps_repetitions_and_reuses_only_compatible_references()
     );
     assert_eq!(fs::read_dir(workspace.path()).unwrap().count(), 0);
     fixture.input.yosys.commit.0 = "second".into();
-    let (second, _) = fixture.run(Some("experiment:1"), ArtifactPolicy::default());
+    let (second, _) = fixture.run(Some("experiment:1"), NO_ARTIFACTS);
     assert_eq!(second.paper.id, first.paper.id);
     assert_eq!(second.paper.measured_at, first.paper.measured_at);
     assert_eq!(fixture.paper_calls(), 2);
     let calls = fs::read_to_string(fixture.root.path().join("fake yosys.calls")).unwrap();
     assert_eq!(calls.lines().count(), 12); // New Yosys samples at both commits.
-    let (fresh, _) = fixture.run(Some("experiment:2"), ArtifactPolicy::default());
+    let (fresh, _) = fixture.run(Some("experiment:2"), NO_ARTIFACTS);
     assert_ne!(fresh.paper.id, first.paper.id);
     assert_eq!(fixture.paper_calls(), 4);
     // Changing executable content at the same path also invalidates the key.
@@ -147,10 +153,10 @@ fn complete_comparison_keeps_repetitions_and_reuses_only_compatible_references()
         &fixture.input.paper.executable,
         &format!("{PAPER}\n# changed executable\n"),
     );
-    let (changed, _) = fixture.run(Some("experiment:2"), ArtifactPolicy::default());
+    let (changed, _) = fixture.run(Some("experiment:2"), NO_ARTIFACTS);
     assert_ne!(changed.paper.id, fresh.paper.id);
-    fixture.run(None, ArtifactPolicy::default());
-    fixture.run(None, ArtifactPolicy::default());
+    fixture.run(None, NO_ARTIFACTS);
+    fixture.run(None, NO_ARTIFACTS);
     assert_eq!(fixture.paper_calls(), 10);
 }
 
@@ -161,7 +167,7 @@ fn retention_is_selective_and_diagnostic_netlists_add_no_samples() {
         None,
         ArtifactPolicy {
             logs: true,
-            ..Default::default()
+            ..NO_ARTIFACTS
         },
     );
     let logs: Vec<_> = fs::read_dir(workspace.path())
@@ -174,7 +180,7 @@ fn retention_is_selective_and_diagnostic_netlists_add_no_samples() {
         None,
         ArtifactPolicy {
             scripts: true,
-            ..Default::default()
+            ..NO_ARTIFACTS
         },
     );
     assert_eq!(fs::read_dir(workspace.path()).unwrap().count(), 7);
@@ -183,7 +189,7 @@ fn retention_is_selective_and_diagnostic_netlists_add_no_samples() {
         None,
         ArtifactPolicy {
             netlists: true,
-            ..Default::default()
+            ..NO_ARTIFACTS
         },
     );
     assert_eq!(fs::read_dir(workspace.path()).unwrap().count(), 3);
@@ -206,7 +212,7 @@ fn failed_processes_and_missing_passes_are_explicit_and_cleanup_scratch_files() 
         workspace.path().into(),
         ArtifactPolicy {
             logs: true,
-            ..Default::default()
+            ..NO_ARTIFACTS
         },
         &mut fixture.store,
     );
@@ -334,11 +340,7 @@ fn real_comparison_and_signed_arithmetic() {
     };
     let workspace = tempfile::tempdir().unwrap();
     let mut store = SqliteStore::open(":memory:").unwrap();
-    let mut context = RunContext::new(
-        workspace.path().into(),
-        ArtifactPolicy::default(),
-        &mut store,
-    );
+    let mut context = RunContext::new(workspace.path().into(), NO_ARTIFACTS, &mut store);
     let result = benchmark.run(&input, &mut context).unwrap();
     assert_eq!(result.yosys_mcm.values.len(), 2);
     assert!(result.synth_with_mcm.values[0].area.is_some());

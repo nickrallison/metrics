@@ -12,7 +12,7 @@ use benchmarks::{
     },
     build::YosysBuilder,
     design::CellLibrary,
-    experiment::{self, Experiment},
+    experiment::{self, Experiment, RunOptions},
     history::{BranchHistory, CommitId, RevisionSelection},
     output::OutputLayout,
     store::{HistoryQuery, SqliteStore, Store},
@@ -25,12 +25,14 @@ fn main() -> Result<()> {
     };
     let mut artifacts = ArtifactPolicy::default();
     let mut jobs = None;
+    let mut options = RunOptions::default();
+    let mut commits = Vec::new();
     let mut args = std::env::args().skip(1);
-    while let Some(argument) = args.next() {
-        match argument.as_str() {
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
             "--help" | "-h" => {
                 println!(
-                    "Usage: run_mcm [--output-dir PATH] [--name NAME] [--keep-artifacts] [--jobs N]\nDefaults: output directory 'output', experiment name 'mcm', raw artifacts off, build jobs equal to available CPUs."
+                    "Usage: run_mcm [--output-dir PATH] [--name NAME] [--experiment ID] [--commit REV] [--workload INDEX] [--artifacts all|none|logs,scripts,netlists] [--keep-artifacts] [--jobs N]\nCompatible experiments are reused. Repeat --commit or --workload to select multiple items.\nDefaults: output directory 'output', experiment name 'mcm', logs/scripts retained, build jobs equal to available CPUs."
                 );
                 return Ok(());
             }
@@ -52,6 +54,30 @@ fn main() -> Result<()> {
                     netlists: true,
                 }
             }
+            "--artifacts" => {
+                let value = argument(&mut args, "--artifacts")?;
+                artifacts = artifact_policy(&value)?;
+            }
+            "--experiment" => {
+                let value = argument(&mut args, "--experiment")?;
+                options.experiment = Some(
+                    value
+                        .parse::<i64>()
+                        .ok()
+                        .filter(|id| *id > 0)
+                        .ok_or_else(|| {
+                            Error::Benchmark("--experiment requires a positive integer".into())
+                        })?,
+                );
+            }
+            "--commit" => commits.push(CommitId(argument(&mut args, "--commit")?)),
+            "--workload" => {
+                options
+                    .workloads
+                    .push(argument(&mut args, "--workload")?.parse().map_err(|_| {
+                        Error::Benchmark("--workload requires a nonnegative integer".into())
+                    })?);
+            }
             "--jobs" => {
                 jobs = Some(
                     args.next()
@@ -68,7 +94,7 @@ fn main() -> Result<()> {
             }
         }
     }
-    let experiment = Experiment {
+    let mut experiment = Experiment {
         output,
         history: BranchHistory {
             repository: "../yosys".into(),
@@ -101,22 +127,39 @@ fn main() -> Result<()> {
         artifacts,
     };
 
+    let database = experiment.output.database_path()?;
+    if options.experiment.is_some() && !database.is_file() {
+        return Err(Error::Storage(format!(
+            "database {} does not exist",
+            database.display()
+        )));
+    }
+    let mut store = SqliteStore::open(database)?;
+    if let Some(id) = options.experiment {
+        // Use the saved suite rather than today's hard-coded benchmark defaults.
+        let saved = store.experiment(id)?;
+        experiment.suite = serde_json::from_value(saved.configuration["suite"].clone())?;
+        experiment.history = serde_json::from_value(saved.configuration["history"].clone())?;
+        experiment.revisions = RevisionSelection::Explicit(
+            saved.commits.into_iter().map(|commit| commit.id).collect(),
+        );
+    }
+    if !commits.is_empty() {
+        experiment.revisions = RevisionSelection::Explicit(commits);
+    }
+
     let mut builder = YosysBuilder {
         repository: experiment.history.repository.clone(),
         cache_dir: experiment.output.output_dir.join("builds/yosys"),
         jobs,
     };
-    let mut store = SqliteStore::open(experiment.output.database_path()?)?;
-
     println!(
         "Configured {} MCM workloads",
         experiment.suite.coefficient_sets.len()
     );
-    let id = experiment::run(&experiment, &mut builder, &mut store)?;
-    let definition = store.experiment(id)?;
-    if let Some(path) = definition.configuration["run_directory"].as_str() {
-        println!("Run directory: {path}");
-    }
+    let summary = experiment::run_with_options(&experiment, &mut builder, &mut store, &options)?;
+    let id = summary.experiment;
+    println!("Run directory: {}", summary.run_directory.display());
     let history = store.history::<McmOutput>(&HistoryQuery {
         experiment: id,
         benchmark_kind: mcm::KIND.into(),
@@ -126,4 +169,41 @@ fn main() -> Result<()> {
     println!("Experiment {id}\n");
     print!("{}", McmView.report(&history)?);
     Ok(())
+}
+
+fn argument(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String> {
+    args.next()
+        .ok_or_else(|| Error::Benchmark(format!("{flag} requires a value")))
+}
+
+fn artifact_policy(value: &str) -> Result<ArtifactPolicy> {
+    let mut policy = ArtifactPolicy {
+        logs: false,
+        scripts: false,
+        netlists: false,
+    };
+    match value {
+        "all" => {
+            return Ok(ArtifactPolicy {
+                logs: true,
+                scripts: true,
+                netlists: true,
+            });
+        }
+        "none" => return Ok(policy),
+        _ => {}
+    }
+    for item in value.split(',') {
+        match item {
+            "logs" => policy.logs = true,
+            "scripts" => policy.scripts = true,
+            "netlists" => policy.netlists = true,
+            _ => {
+                return Err(Error::Benchmark(format!(
+                    "unknown artifact kind {item:?}; use all, none, or logs,scripts,netlists"
+                )));
+            }
+        }
+    }
+    Ok(policy)
 }

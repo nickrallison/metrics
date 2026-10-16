@@ -85,6 +85,85 @@ fn database() -> (SqliteStore, ExperimentDefinition, ExperimentId) {
 }
 
 #[test]
+fn prepares_stable_experiments_across_policies_subsets_and_new_commits() {
+    let mut store = SqliteStore::open(":memory:").unwrap();
+    let mut original = definition();
+    original.configuration["artifacts"] = json!({"logs": false});
+    original.configuration["run_directory"] = json!("first");
+    let experiment = store.prepare_experiment(&original, None).unwrap();
+    let mut rerun = original.clone();
+    rerun.configuration["artifacts"] = json!({"logs": true});
+    rerun.configuration["run_directory"] = json!("second");
+    rerun.configuration["revisions"] = json!({"Explicit": ["a"]});
+    rerun.commits = vec![original.commits[1].clone()];
+    assert_eq!(store.prepare_experiment(&rerun, None).unwrap(), experiment);
+    assert_eq!(
+        store.prepare_experiment(&rerun, Some(experiment)).unwrap(),
+        experiment
+    );
+    assert_eq!(
+        store.experiment(experiment).unwrap().configuration["run_directory"],
+        "first"
+    );
+
+    let mut next = original.commits[1].clone();
+    next.id.0 = "c".into();
+    rerun.commits = vec![next.clone()];
+    assert_eq!(store.prepare_experiment(&rerun, None).unwrap(), experiment);
+    assert_eq!(
+        store.experiment(experiment).unwrap().commits,
+        [original.commits, vec![next]].concat()
+    );
+
+    rerun.benchmarks[0].version += 1;
+    assert!(store.prepare_experiment(&rerun, Some(experiment)).is_err());
+    assert_ne!(store.prepare_experiment(&rerun, None).unwrap(), experiment);
+}
+
+#[test]
+fn reuse_validation_rolls_back_new_commits_and_all_attempts_remain_queryable() {
+    let (mut store, definition, experiment) = database();
+    let mut bad = definition.clone();
+    let mut next = bad.commits[0].clone();
+    next.id.0 = "c".into();
+    bad.commits = vec![next.clone(), next];
+    assert!(store.prepare_experiment(&bad, Some(experiment)).is_err());
+    assert_eq!(
+        store.experiment(experiment).unwrap().commits,
+        definition.commits
+    );
+    for cells in [7, 8] {
+        let record = store
+            .start_run(&start(experiment, &definition, 0, 0))
+            .unwrap();
+        finish(&mut store, record, cells);
+    }
+    assert!(
+        !store
+            .try_complete_commit(experiment, &definition.commits[0].id)
+            .unwrap()
+    );
+    assert_eq!(
+        store
+            .history::<Metrics>(&query(experiment))
+            .unwrap()
+            .records
+            .len(),
+        1
+    );
+    let attempts = store.attempts::<Metrics>(&query(experiment)).unwrap();
+    assert_eq!(attempts.records.len(), 2);
+    assert!(matches!(
+        attempts.records[0].record.outcome,
+        Outcome::Succeeded(Metrics { cells: 7, .. })
+    ));
+    assert!(matches!(
+        attempts.records[1].record.outcome,
+        Outcome::Succeeded(Metrics { cells: 8, .. })
+    ));
+}
+
+#[test]
 fn records_pending_attempts_and_references_survive_reopening() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("nested/history.sqlite");
@@ -232,7 +311,7 @@ fn latest_failed_measurement_is_not_hidden_by_an_older_success() {
 }
 
 #[test]
-fn completion_requires_a_finished_latest_attempt_for_each_workload_in_order() {
+fn completion_is_per_commit_and_the_processed_prefix_still_stops_at_gaps() {
     let (mut store, definition, experiment) = database();
     assert_eq!(store.last_complete(experiment).unwrap(), None);
     for benchmark in 0..2 {
@@ -241,11 +320,10 @@ fn completion_requires_a_finished_latest_attempt_for_each_workload_in_order() {
             .unwrap();
         finish(&mut store, id, 1);
     }
-    assert!(
-        store
-            .complete_commit(experiment, &definition.commits[1].id)
-            .is_err()
-    );
+    store
+        .complete_commit(experiment, &definition.commits[1].id)
+        .unwrap();
+    assert_eq!(store.last_complete(experiment).unwrap(), None);
     let old = store
         .start_run(&start(experiment, &definition, 0, 0))
         .unwrap();

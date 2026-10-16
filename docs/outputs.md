@@ -9,7 +9,7 @@ cargo run --bin view_results -- --output-dir output --name mcm --details
 
 The default root is `output` and default name is `mcm`. `--name` chooses a
 filesystem/database namespace; the viewer's `--experiment ID` chooses an
-individual registered invocation inside that database.
+registered experiment inside that database. Compatible invocations reuse its ID.
 
 ```text
 output/
@@ -18,6 +18,7 @@ output/
   mcm/
     database.sqlite                   SQLite results for this named experiment
     2026-10-16T18:42:07.123456789Z/     One invocation, in UTC
+      run.json                       Invocation settings and experiment ID
       0000-mcm-<full-commit-id>/       Frozen workload index, kind, and revision
         build_artifacts/
           design.v
@@ -44,14 +45,16 @@ nanosecond until it creates a fresh directory, preserving existing files.
 A timestamp covers the whole invocation. A benchmark directory includes its
 original frozen position and full commit ID so duplicate workloads and runs over
 multiple revisions have separate destinations. Paths are stored in SQLite;
-`configuration.run_directory` identifies the timestamp directory and each retained
+the original `configuration.run_directory` identifies the first invocation,
+`run.json` identifies each invocation and its settings, and each retained
 attempt's `artifacts` field identifies its `build_artifacts` directory.
 
-Raw artifacts remain opt-in. `--keep-artifacts` enables all three retention flags;
+Logs and scripts are retained by default; netlists are opt-in.
+`--artifacts none` disables retention, and `--keep-artifacts` enables all three flags;
 library callers can select logs, scripts, and netlists independently through
 `ArtifactPolicy`. With retention off, scratch workspaces inside the timestamp
 directory are cleaned on return/unwind, and parsed observations remain in SQLite.
-A timestamp directory can therefore be empty. Retained files survive benchmark
+A timestamp directory still contains its small `run.json`. Retained files survive benchmark
 failures, panics, and finalization failures. Netlists come from separate diagnostic
 invocations and do not add timing observations.
 

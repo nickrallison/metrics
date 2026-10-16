@@ -12,16 +12,26 @@ use crate::{
     store::{Reference, ReferenceCache, ReferenceId},
 };
 
-/// Raw outputs are discarded unless explicitly requested; all flags default off.
+/// Logs and scripts are retained by default; netlist retention is opt-in.
 ///
 /// Parsed statistics, timing samples, definitions, and outcome summaries are
 /// always retained. Temporary files needed by another phase can exist without
 /// becoming retained artifacts. Capturing stdout for parsing is not log retention.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ArtifactPolicy {
     pub logs: bool,
     pub scripts: bool,
     pub netlists: bool,
+}
+
+impl Default for ArtifactPolicy {
+    fn default() -> Self {
+        Self {
+            logs: true,
+            scripts: true,
+            netlists: false,
+        }
+    }
 }
 
 #[derive(Debug)]

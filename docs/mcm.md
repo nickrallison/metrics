@@ -13,8 +13,39 @@ The runner uses hard-coded repository, branch, revision selection, coefficients,
 Liberty file, and paper executable paths in `src/bin/run_mcm.rs`. Its default paper
 executable and library come from `../yosys/tests/techmap/mcm`. Both must exist;
 the runner does not download them. A Yosys revision without `mcm` produces an
-unsupported outcome. Each invocation creates a new experiment and preserves old
-attempts, including failed scaffold runs.
+unsupported outcome. Compatible invocations reuse the same experiment ID and
+append attempts. A changed frozen workload collection, procedure version, suite,
+or branch/repository configuration starts a different experiment. Changing
+artifact policy or selected commits does not.
+
+Rerun one commit under an existing experiment, retaining all benchmark artifacts:
+
+```sh
+cargo run --bin run_mcm -- --experiment 5 --commit a31d95ea005b --keep-artifacts
+```
+
+Add `--workload 0` to rerun only that frozen workload. Both selectors are
+repeatable. `--experiment ID` loads the saved suite and repository settings;
+without it, the runner uses its configured suite and reuses the most recently
+registered compatible experiment. Newly selected commits append to its revision
+order. Existing experiments are not merged or renumbered.
+
+`--artifacts all|none|logs,scripts,netlists` selects retention explicitly; a comma
+list may contain any subset. `--keep-artifacts` enables all three kinds.
+Artifact settings do not change benchmark parameters. Existing Yosys
+installations and ccache remain reusable; rerunning measurements does not
+necessarily repeat compilation.
+
+Every attempt gets a record ID and preserves its commit, workload, samples,
+outcome, and retained artifact path. New attempts never overwrite old results or
+files. Normal views use the latest finished result per commit/workload, including
+failures; an unfinished retry leaves the previous finished result visible.
+List all finished attempts and unfinished work with:
+
+```sh
+cargo run --bin view_results -- --experiment 5 --attempts
+cargo run --bin view_results -- --experiment 5 --attempts --json
+```
 
 The current selection is two adjacent mainline revisions, `8802950c22d4` then
 `a31d95ea005b`, to check compiler cache reuse. To compile both instead of reusing
@@ -56,15 +87,17 @@ configured search range, bit widths 1 through 30, and signed 32-bit seeds. Zero
 coefficients are explicitly unsupported by the paper tool. Version 1 and version
 2 use the same output shape, but their procedure histories are kept separate.
 
-Paper references are reused only within one experiment, across Yosys commits.
+Paper references are reused only within one invocation, across Yosys commits.
 Their key includes procedure version, executable content SHA-256, ordered values,
-widths, seed, repetition count, OS/architecture, and experiment scope. New
-experiments refresh timings. Reuse preserves the reference ID, timestamp, and
+widths, seed, repetition count, OS/architecture, and invocation scope. Every
+invocation refreshes timings, including reruns in the same experiment.
+Reuse preserves the reference ID, timestamp, and
 sample count. Unscoped contexts always measure fresh samples. Cross-experiment
-timing reuse, resume, general input digests, and process timeouts are deferred.
+timing reuse, automatic resume, general input digests, and process timeouts are deferred.
 
-Raw artifacts default off. Temporary source/scripts are removed on return,
-including failure. Requested logs retain each process's stdout/stderr; requested
+Logs and scripts are retained by default; netlists are opt-in. Unretained
+temporary files are removed on return, including failure. Requested logs retain
+each process's stdout/stderr; requested
 scripts retain the generated input and phase scripts. Requested netlists come
 from separate diagnostic invocations after measured runs, so output generation
 never changes stored timing observations. Diagnostic invocations add no samples.

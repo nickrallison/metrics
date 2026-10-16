@@ -131,11 +131,19 @@ database and run files. `Experiment::output` carries this configuration so every
 benchmark in an invocation uses the same output root and timestamp.
 
 The human name, such as `mcm`, groups invocations into one directory/database.
-An `ExperimentId` identifies an individual invocation inside that database. Each
+An `ExperimentId` identifies a stable suite/configuration inside that database. Each
 invocation also gets a readable UTC RFC 3339 timestamp directory. Retained files
 are grouped by workload position, kind, and commit, under `build_artifacts`.
 This keeps earlier measurements available when the same named experiment is run
 again. See [Output layout](docs/outputs.md) for paths and CLI options.
+
+`RunOptions` selects an existing experiment and optional zero-based workload
+positions. `run_with_options` returns a `RunSummary` containing the stable
+experiment ID and this invocation's directory. Compatible SQLite invocations
+reuse their experiment; each commit/workload execution appends a new record.
+Artifact policy is an execution choice rather than experiment identity.
+`run_mcm --experiment ID --commit REV --workload INDEX --keep-artifacts` reruns a
+selected comparison. `view_results --attempts` exposes its saved history.
 
 The private `Workspace` type controls cleanup: temporary workspaces are removed
 on return or unwind, while retained workspaces preserve their files.
@@ -164,12 +172,12 @@ Sources: [benchmark/mod.rs](src/benchmark/mod.rs),
 | Type                | Meaning                                                                                                                             |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `RunContext<'a, C>` | Per-attempt workspace and helpers. Borrows `&'a mut C` for reference access; carries artifact settings and a reference-reuse scope. |
-| `ArtifactPolicy`    | Independent `logs`, `scripts`, and `netlists` retention flags, all off by default.                                                  |
+| `ArtifactPolicy`    | Independent `logs`, `scripts`, and `netlists` retention flags. Logs/scripts default on; netlists default off.                      |
 | `ProcessOutput`     | Captured subprocess output plus elapsed wall-clock duration.                                                                        |
 | `Samples<T>`        | Individual observations for one procedure/workload. Preserves repetitions instead of replacing them with an average.                |
 
-The experiment gives MCM contexts an experiment-specific reference scope. Paper
-observations can be reused across that experiment's Yosys commits. Unscoped
+The experiment gives MCM contexts an invocation-specific reference scope. Paper
+observations can be reused across that invocation's Yosys commits. Unscoped
 contexts collect fresh references. Process timing covers spawn through output
 collection; preparation, parsing, and subsequent log writing happen outside it.
 
@@ -233,8 +241,8 @@ Sources: [store/mod.rs](src/store/mod.rs), [reference.rs](src/store/reference.rs
 A workload's position distinguishes duplicate definitions. SQLite history picks
 the latest finished measurement per commit/workload and excludes inspections.
 A pending retry leaves the previous finished measurement queryable. Commit
-completion requires terminal outcomes for every workload and a completed prefix;
-failed/unsupported outcomes count as processed. Build failures and unfinished
+completion requires terminal outcomes for every workload; `last_complete` derives the completed prefix.
+Failed/unsupported outcomes count as processed. Build failures and unfinished
 attempts leave the affected commit incomplete.
 
 ## Views and reports

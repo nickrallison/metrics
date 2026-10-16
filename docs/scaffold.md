@@ -43,15 +43,31 @@ cargo run --bin view_results
 
 The examples currently exit with explicit `NotImplemented` errors. They do not
 build tools, launch benchmarks, open a database, or manufacture results.
-`run_mcm` expands its hard-coded coefficient sets before reaching orchestration.
+`run_mcm` configures hard-coded coefficient sets; orchestration freezes them once
+before resolving revisions.
 Edit its repository, branch, commit anchor, library, and paper-tool paths when
 the execution phases are implemented. `view_results` shows the typed query and
 view pipeline; rendering is not implemented.
 
-Working pieces are the types, serialization, suite expansion, tool binding, and
-reference-cache delegation. Git traversal, builds, timed execution, parsing,
+Working pieces are the types, serialization, suite expansion, tool binding,
+reference-cache delegation, and sequential orchestration. The orchestration loop
+registers frozen definitions and revision order, starts/finalizes attempts, records
+benchmark failures, and completes only processed commits. Its tests use fake
+dependencies; Git traversal, builds, timed execution, parsing,
 reference storage, SQLite lifecycle operations, history projection, and graphical
 rendering remain stubs. There is no SQLite dependency yet.
+
+Each invocation currently creates a new experiment; automatic resume and input
+digest verification remain unimplemented. Benchmark failures are terminal outcomes
+and do not stop the sweep. Build, input setup, workspace, and storage failures
+stop execution before completing the affected commit. Successful orchestration
+means the comparisons were processed, not that every comparison succeeded.
+
+With default retention, each attempt uses a temporary directory cleaned on return
+or unwind. Requested artifacts keep a unique workspace under
+`output/artifacts/<experiment>/attempt-*`, whose absolute path is recorded with
+the attempt. The context/benchmark must select which files to retain; selective
+file handling is still part of the unfinished context implementation.
 
 ## Behavior contracts
 
@@ -88,10 +104,11 @@ porting notes distinguish historical behavior from the intended Rust contracts.
    generation; retain all repeated observations.
 2. Add reference caching, including complete keys, immutable reference IDs,
    measurement environment, and refresh behavior.
-3. Implement SQLite records and the typed MCM view for one commit. Add lifecycle
-   operations for experiment registration, attempt start/finish, and completion.
-4. Implement branch traversal and cached Yosys builds, then connect the sequential
-   history loop. Persist frozen definitions and resolved commit order.
+3. Implement SQLite records and the typed MCM view for one commit, including the
+   existing lifecycle contracts for registration, start/finish, build failures,
+   and commit completion. Finalization must update the same started attempt.
+4. Implement branch traversal and cached Yosys builds, then exercise the existing
+   sequential history loop with those real dependencies.
 5. Add verified resume, explicit reruns, input digest checks, and artifact
    inspection. These must not silently change workloads or replace measurements.
 6. Add a graphical renderer, a synthesis view, and a design-manifest adapter.
@@ -125,9 +142,9 @@ configurable build-profile hierarchy, or universal metric database.
 - Decide whether paper timing is reused across compatible sessions or refreshed
   each session while caching structural results separately. Choose the environment
   description and deterministic cache-key encoding before enabling reuse.
-- Raw artifacts are off by default. Failure-only log retention is optional future
-  policy. Choose permanent artifact paths and cleanup ownership when implementing
-  retention; use attempt-specific directories rather than overwriting files.
+- Raw artifacts are off by default. Attempt directories are isolated and retained
+  only on request; selective file retention and failure-only log policy remain
+  context implementation decisions.
 - Choose an explicit attempt-selection policy for views and resume. Preserve all
   attempts; retry observations must not be pooled as independent repetitions.
 - Resolve the historical Verilog sizing questions documented with the reference

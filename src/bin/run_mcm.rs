@@ -9,7 +9,6 @@ use benchmarks::{
     experiment::{self, Experiment},
     history::{BranchHistory, CommitId, RevisionSelection},
     store::SqliteStore,
-    suite::Suite,
 };
 
 fn main() -> Result<()> {
@@ -51,7 +50,7 @@ fn main() -> Result<()> {
 
     println!(
         "Prepared {} MCM workloads",
-        experiment.suite.benchmarks()?.len()
+        experiment.suite.coefficient_sets.len()
     );
     experiment::run(&experiment, &mut builder, &mut store)
 }

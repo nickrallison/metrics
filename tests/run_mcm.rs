@@ -30,6 +30,7 @@ fn rejects_invalid_rerun_selectors_and_policies_before_opening_storage() {
         vec!["--workload", "abc"],
         vec!["--artifacts", "bad"],
         vec!["--commit"],
+        vec!["--perf-addr2line", "/some/tool"],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_run_mcm"))
             .current_dir(directory.path())
@@ -38,5 +39,18 @@ fn rejects_invalid_rerun_selectors_and_policies_before_opening_storage() {
             .unwrap();
         assert!(!output.status.success());
     }
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn missing_profiling_prerequisites_fail_before_opening_storage() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_run_mcm"))
+        .current_dir(directory.path())
+        .args(["--perf", "--perf-addr2line", "/missing/llvm-addr2line"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Profiling"));
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
 }

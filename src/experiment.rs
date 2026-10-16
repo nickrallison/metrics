@@ -29,7 +29,7 @@ use tempfile::TempDir;
 
 use crate::{
     Error, Result,
-    benchmark::{ArtifactPolicy, Benchmark, RunContext},
+    benchmark::{ArtifactPolicy, Benchmark, PerfProfiler, RunContext},
     build::Builder,
     history::{BranchHistory, Commit, RevisionSelection},
     output::OutputLayout,
@@ -56,6 +56,8 @@ pub struct RunOptions {
     pub experiment: Option<ExperimentId>,
     /// Original zero-based workload positions. Empty means every workload.
     pub workloads: Vec<usize>,
+    /// Collect diagnostic perf recordings after measured Yosys phases.
+    pub perf: Option<PerfProfiler>,
 }
 
 #[derive(Debug)]
@@ -170,6 +172,7 @@ where
     // configuration, including the requested policy when no raw files are kept.
     configuration["experiment_id"] = serde_json::to_value(experiment_id)?;
     configuration["workloads"] = serde_json::to_value(&options.workloads)?;
+    configuration["perf"] = serde_json::to_value(&options.perf)?;
     fs::write(
         run_directory.join("run.json"),
         serde_json::to_vec_pretty(&configuration)?,
@@ -193,7 +196,8 @@ where
             }
             let retain = experiment.artifacts.logs
                 || experiment.artifacts.scripts
-                || experiment.artifacts.netlists;
+                || experiment.artifacts.netlists
+                || options.perf.is_some();
             let workspace =
                 workspace(&run_directory, &commit, benchmark_index, definition, retain)?;
             let path = fs::canonicalize(workspace.path())?;
@@ -211,6 +215,7 @@ where
             let outcome = {
                 let mut context = RunContext::new(path, experiment.artifacts, store);
                 context.reference_scope = Some(reference_scope.clone());
+                context.perf = options.perf.as_ref();
                 match benchmark.run(&input, &mut context) {
                     Ok(output) => Outcome::Succeeded(output),
                     Err(Error::Unsupported(reason)) => Outcome::Unsupported(reason),

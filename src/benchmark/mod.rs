@@ -19,8 +19,10 @@
 //! trait-object or plugin interface. Separate parser and stage traits are deferred.
 
 mod context;
+mod perf;
 
 pub use context::{ArtifactPolicy, ProcessOutput, RunContext};
+pub use perf::PerfProfiler;
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 

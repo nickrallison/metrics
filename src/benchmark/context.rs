@@ -12,6 +12,8 @@ use crate::{
     store::{Reference, ReferenceCache, ReferenceId},
 };
 
+use super::PerfProfiler;
+
 /// Logs and scripts are retained by default; netlist retention is opt-in.
 ///
 /// Parsed statistics, timing samples, definitions, and outcome summaries are
@@ -51,6 +53,8 @@ pub struct RunContext<'a, C: ReferenceCache> {
     /// Only reuse reference timings within this compatible measurement session.
     /// `None` forces fresh reference measurements. Experiments set their own ID.
     pub reference_scope: Option<String>,
+    /// Optional diagnostic recordings, outside the stored timing samples.
+    pub perf: Option<&'a PerfProfiler>,
     cache: &'a mut C,
     processes: usize,
 }
@@ -61,6 +65,7 @@ impl<'a, C: ReferenceCache> RunContext<'a, C> {
             workspace,
             artifacts,
             reference_scope: None,
+            perf: None,
             cache,
             processes: 0,
         }

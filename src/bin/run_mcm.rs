@@ -7,7 +7,7 @@ use clap::Parser;
 
 use benchmarks::{
     Error, Result,
-    benchmark::ArtifactPolicy,
+    benchmark::{ArtifactPolicy, PerfProfiler},
     benchmarks::mcm::{
         self, CoefficientGenerator, CoefficientSets, McmOptions, McmOutput, McmSuite, McmView,
         PaperTool,
@@ -52,6 +52,17 @@ struct Args {
     /// Parallel compiler jobs, capped at available CPUs; defaults to that cap.
     #[arg(long, value_name = "N")]
     jobs: Option<NonZeroUsize>,
+    /// Record extra Yosys invocations with perf and retain source flamegraphs.
+    #[arg(long)]
+    perf: bool,
+    /// Address resolver for perf script; requires --perf.
+    #[arg(
+        long,
+        value_name = "PATH",
+        default_value = "/usr/bin/llvm-addr2line-16",
+        requires = "perf"
+    )]
+    perf_addr2line: PathBuf,
 }
 
 impl Args {
@@ -78,6 +89,10 @@ fn main() -> Result<()> {
     let options = RunOptions {
         experiment: args.experiment,
         workloads: args.workloads,
+        perf: args
+            .perf
+            .then(|| PerfProfiler::new(&args.perf_addr2line))
+            .transpose()?,
     };
     let commits: Vec<_> = args.commits.into_iter().map(CommitId).collect();
     let mut experiment = Experiment {
@@ -136,7 +151,10 @@ fn main() -> Result<()> {
 
     let mut builder = YosysBuilder {
         repository: experiment.history.repository.clone(),
-        cache_dir: experiment.output.output_dir.join("builds/yosys"),
+        cache_dir: experiment
+            .output
+            .output_dir
+            .join("builds/yosys-relwithdebinfo"),
         jobs: args.jobs,
     };
     println!(

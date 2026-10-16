@@ -62,6 +62,8 @@ pub enum Error {
     InvalidView(String),
     #[error("benchmark error: {0}")]
     Benchmark(String),
+    #[error("profiling error: {0}")]
+    Profiling(String),
     #[error("invalid output configuration: {0}")]
     Output(String),
     #[error("{command} failed ({status}): {detail}")]

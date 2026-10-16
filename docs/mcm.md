@@ -3,6 +3,7 @@
 ```sh
 cargo run --bin run_mcm
 cargo run --bin run_mcm -- --jobs 8
+cargo run --bin run_mcm -- --perf --workload 0
 cargo run --bin view_results
 cargo run --bin view_results -- --experiment 7 --metric area --json
 cargo run --bin run_mcm -- --output-dir output --name manual-mcm --keep-artifacts
@@ -56,7 +57,7 @@ cargo run --bin run_mcm -- --output-dir output-ccache-check
 ```
 
 Both builds share `output-ccache-check/builds/ccache`. Each build log under
-`output-ccache-check/builds/yosys/logs` ends compilation with cumulative ccache
+`output-ccache-check/builds/yosys-relwithdebinfo/logs` ends compilation with cumulative ccache
 statistics. The second build should add cache hits; dependencies that changed
 still compile. Repeating the command reuses the completed installations.
 
@@ -103,6 +104,11 @@ from separate diagnostic invocations after measured runs, so output generation
 never changes stored timing observations. Diagnostic invocations add no samples.
 `--keep-artifacts` enables logs, scripts, and netlists for the example. Retained
 files follow the [output layout](outputs.md) selected by `--output-dir` and `--name`.
+
+`--perf` records additional Yosys invocations after measured samples, generating
+`perf.data` and `flamegraph.svg` for each phase/repetition. These artifacts are
+retained independently of the normal retention policy. See [profiling](profiling.md)
+for prerequisites, commands, and directory layout.
 
 The viewer defaults to `output/mcm/database.sqlite`, the latest registered
 experiment, and both metrics. Use `--output-dir PATH`, `--name NAME`,

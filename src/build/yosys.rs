@@ -16,7 +16,7 @@ use crate::{
 
 // Bump when changing compilation options or installed contents. Compiler caching
 // and job limits do not invalidate already completed installations.
-const RECIPE_VERSION: u32 = 1;
+const RECIPE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone)]
 pub struct Yosys {
@@ -27,7 +27,7 @@ pub struct Yosys {
 
 /// Builds committed sources, ignoring worktree edits, into a private installation.
 ///
-/// Uses CMake Release when available, otherwise the historical Make build. CMake
+/// Uses CMake RelWithDebInfo when available, otherwise the historical Make build. CMake
 /// uses bundled dependencies with unit tests disabled; both builds include ABC.
 /// Compilation uses the available CPU count; `jobs` can lower that limit.
 /// Fresh builds require ccache and share compiler output across commits.
@@ -127,6 +127,12 @@ impl Builder for YosysBuilder {
             ("CCACHE_BASEDIR", workspace.path().as_os_str()),
             ("CCACHE_TEMPDIR", compiler_tmp.as_os_str()),
         ];
+        log.run(
+            "ccache configuration",
+            Command::new("ccache")
+                .args(["--max-size", "20GiB"])
+                .envs(compiler_environment),
+        )?;
         writeln!(log.file, "Compiler cache: {}", compiler_cache.display())?;
         let available = std::thread::available_parallelism()?;
         let jobs = self.jobs.unwrap_or(available).min(available).to_string();
@@ -166,7 +172,7 @@ impl Builder for YosysBuilder {
                     .arg(&source)
                     .arg("-B")
                     .arg(&build)
-                    .arg("-DCMAKE_BUILD_TYPE=Release")
+                    .arg("-DCMAKE_BUILD_TYPE=RelWithDebInfo")
                     .arg(format!("-DCMAKE_INSTALL_PREFIX={}", prefix.display()))
                     .arg("-DCMAKE_INSTALL_BINDIR=bin")
                     .arg("-DCMAKE_INSTALL_DATADIR=share")
@@ -182,7 +188,7 @@ impl Builder for YosysBuilder {
                 Command::new("cmake")
                     .arg("--build")
                     .arg(&build)
-                    .args(["--config", "Release", "--parallel", &jobs])
+                    .args(["--config", "RelWithDebInfo", "--parallel", &jobs])
                     .envs(compiler_environment),
             )?;
             log.run(
@@ -190,7 +196,7 @@ impl Builder for YosysBuilder {
                 Command::new("cmake")
                     .arg("--install")
                     .arg(&build)
-                    .args(["--config", "Release"])
+                    .args(["--config", "RelWithDebInfo"])
                     .envs(compiler_environment),
             )?;
         } else if source.join("Makefile").is_file() {
@@ -200,14 +206,14 @@ impl Builder for YosysBuilder {
                 "compile",
                 Command::new("make")
                     .current_dir(&source)
-                    .args(["-j", &jobs, &prefix_arg, "ENABLE_CCACHE=1"])
+                    .args(["-j", &jobs, &prefix_arg, "ENABLE_CCACHE=1", "STRIP=true"])
                     .envs(compiler_environment),
             )?;
             log.run(
                 "install",
                 Command::new("make")
                     .current_dir(&source)
-                    .args(["install", &prefix_arg, "ENABLE_CCACHE=1"])
+                    .args(["install", &prefix_arg, "ENABLE_CCACHE=1", "STRIP=true"])
                     .envs(compiler_environment),
             )?;
         } else {

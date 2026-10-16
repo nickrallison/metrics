@@ -577,6 +577,7 @@ fn selected_rerun_changes_policy_without_losing_results_or_allocating_an_experim
         &RunOptions {
             experiment: Some(first.experiment),
             workloads: vec![1],
+            ..RunOptions::default()
         },
     )
     .unwrap();

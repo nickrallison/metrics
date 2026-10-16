@@ -13,7 +13,7 @@ registered experiment inside that database. Compatible invocations reuse its ID.
 
 ```text
 output/
-  builds/yosys/                       Shared Yosys installation cache and build logs
+  builds/yosys-relwithdebinfo/        Shared Yosys installation cache and build logs
   builds/ccache/                      Shared compiler output across Yosys revisions
   mcm/
     database.sqlite                   SQLite results for this named experiment
@@ -30,6 +30,8 @@ output/
           mcm.v
           baseline.v
           with-mcm.v
+          perf/mcm-0/perf.data        With --perf
+          perf/mcm-0/flamegraph.svg
           ...
       0001-mcm-<full-commit-id>/
         build_artifacts/
@@ -50,19 +52,20 @@ the original `configuration.run_directory` identifies the first invocation,
 attempt's `artifacts` field identifies its `build_artifacts` directory.
 
 Logs and scripts are retained by default; netlists are opt-in.
-`--artifacts none` disables retention, and `--keep-artifacts` enables all three flags;
+`--artifacts none` disables normal retention, and `--keep-artifacts` enables all three flags;
 library callers can select logs, scripts, and netlists independently through
 `ArtifactPolicy`. With retention off, scratch workspaces inside the timestamp
 directory are cleaned on return/unwind, and parsed observations remain in SQLite.
 A timestamp directory still contains its small `run.json`. Retained files survive benchmark
 failures, panics, and finalization failures. Netlists come from separate diagnostic
 invocations and do not add timing observations.
+`--perf` separately retains recordings and flamegraphs even with normal retention off.
 
 `OutputLayout` validates the experiment name as one directory component.
 `Experiment::output` selects the layout for execution. The supplied binaries also
 use its database path; callers of the generic runner still provide their own
 `Store`. The shared Yosys cache is configured separately by the builder and the
-example puts it at `<output_dir>/builds/yosys` to reuse installations across runs.
+example puts it at `<output_dir>/builds/yosys-relwithdebinfo` to reuse installations across runs.
 Its sibling `<output_dir>/builds/ccache` reuses compiler output across commits;
 see [Yosys builds](builds.md).
 

@@ -325,7 +325,7 @@ fn real_comparison_and_signed_arithmetic() {
     .remove(0);
     let mut builder = crate::build::YosysBuilder {
         repository,
-        cache_dir: "output/builds/yosys".into(),
+        cache_dir: "output/builds/yosys-relwithdebinfo".into(),
         jobs: None,
     };
     let yosys = crate::build::Builder::build(&mut builder, &commit).unwrap();

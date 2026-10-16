@@ -7,9 +7,10 @@ Local submodule object databases are reused when they contain the pinned commit;
 missing dependencies are fetched using Git's normal submodule update behavior.
 Only Yosys's top-level submodules are initialized, matching its build instructions.
 
-The fixed procedure uses CMake Release, bundled dependency libraries, and no unit
+The fixed procedure uses CMake `RelWithDebInfo`, bundled dependency libraries, and no unit
 tests. ABC and the default synthesis components are included. Revisions without
-CMakeLists.txt use their historical Makefile defaults. Both procedures install
+CMakeLists.txt use their historical Makefile defaults with `STRIP=true` to retain
+debug information during installation. Both procedures install
 into the cache without sudo. Compilation defaults to the available CPU count;
 set `YosysBuilder.jobs` to a nonzero count to lower the limit. The example runner
 accepts `--jobs N`. Both cap the requested count at the available CPU count,
@@ -29,7 +30,7 @@ and the libraries described in the Yosys README. Missing commands, dependencies,
 and compilation failures are reported with the stage and a persistent log path.
 
 ```text
-output/builds/yosys/
+output/builds/yosys-relwithdebinfo/
   cache.json             Canonical repository path and build recipe version
   .lock                  Serializes builders sharing this cache
   <full-commit-id>/
@@ -48,6 +49,11 @@ The builder sets `CCACHE_DIR` to that shared directory and `CCACHE_BASEDIR` to e
 temporary workspace, normalizing compiler paths across fresh checkouts. Ccache
 temporary files stay inside the workspace. These settings affect child processes
 only; the user's global ccache configuration is not changed.
+
+The builder sets the project cache limit to 20 GiB before compilation using
+`ccache --max-size`. This limit is defined in `src/build/yosys.rs` and applies to
+fresh output directories too. Ccache saves it in the cache's local configuration,
+so standalone `ccache --show-stats` commands also report the configured limit.
 
 Unchanged compilations can reuse cached object files. Source/header, compiler,
 and option changes are handled by ccache; configuration, code generation,
@@ -69,6 +75,11 @@ attempt. Before returning a cached installation, the builder checks required dat
 files, runs Yosys to read its installed simulation libraries, and starts ABC.
 A failed validation triggers a fresh build.
 
+Recipe version 2 enables debug information. `run_mcm` uses the new
+`builds/yosys-relwithdebinfo` cache so older Release installations are not reused.
+The shared `builds/ccache` directory stays the same. Library callers using an old
+cache must select a new directory when switching recipes.
+
 A cache belongs to one canonical repository path and build recipe. Reusing it for
 a different repository or recipe returns an error; select a different cache
 directory. Changes to compilation options or installed contents must increment
@@ -89,7 +100,7 @@ using the installed data files and ABC:
 cargo test --offline --lib build::yosys::tests::real_yosys_build -- --ignored --nocapture
 ```
 
-It defaults to `../yosys`, `HEAD` on `main`, and `output/builds/yosys`. Override
+It defaults to `../yosys`, `HEAD` on `main`, and `output/builds/yosys-relwithdebinfo`. Override
 `BENCHMARKS_YOSYS_REPOSITORY`, `BENCHMARKS_YOSYS_COMMIT`, or
 `BENCHMARKS_YOSYS_CACHE` as needed. Cargo's `--offline` controls Cargo dependencies;
 Git can still fetch missing Yosys submodules. The real check is ignored during

@@ -37,6 +37,9 @@ impl Fixture {
             r#"
 cmake_minimum_required(VERSION 3.16)
 project(test_yosys NONE)
+if(NOT CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    message(FATAL_ERROR "Expected optimized build with debug information")
+endif()
 install(PROGRAMS yosys yosys-abc DESTINATION bin)
 install(FILES simlib.v simcells.v DESTINATION share/yosys)
 "#,
@@ -357,7 +360,7 @@ fn real_yosys_build() {
         repository,
         cache_dir: std::env::var_os("BENCHMARKS_YOSYS_CACHE")
             .map(PathBuf::from)
-            .unwrap_or_else(|| "output/builds/yosys".into()),
+            .unwrap_or_else(|| "output/builds/yosys-relwithdebinfo".into()),
         jobs: None,
     };
     let tool = builder.build(&commits[0]).unwrap();

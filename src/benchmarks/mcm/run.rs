@@ -104,6 +104,29 @@ pub(super) fn run<C: ReferenceCache>(
             )?;
         }
     }
+    if let Some(profiler) = context.perf {
+        for (phase, script) in [
+            ("mcm", &profile),
+            ("baseline", &baseline),
+            ("with-mcm", &optimized),
+        ] {
+            for index in 0..benchmark.repetitions.get() {
+                let directory = context
+                    .workspace
+                    .join("perf")
+                    .join(format!("{phase}-{index}"));
+                fs::create_dir_all(&directory)?;
+                fs::write(directory.join("design.v"), verilog(benchmark)?)?;
+                fs::write(directory.join("run.ys"), script)?;
+                profiler.record(
+                    Command::new(&yosys)
+                        .current_dir(&directory)
+                        .args(["-Q", "-T", "-s", "run.ys"]),
+                    &directory,
+                )?;
+            }
+        }
+    }
     Ok(McmOutput {
         yosys_mcm,
         paper,

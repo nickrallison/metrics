@@ -21,4 +21,8 @@ pub enum Error {
     InvalidGitOutput(String),
     #[error("{0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("{0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("invalid storage state: {0}")]
+    Storage(String),
 }

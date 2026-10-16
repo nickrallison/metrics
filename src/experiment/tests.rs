@@ -426,3 +426,57 @@ fn suite_failure_stops_before_revision_resolution_or_registration() {
     ));
     assert_eq!(*h.events.borrow(), vec!["freeze"]);
 }
+
+#[test]
+fn experiment_records_real_sqlite_history_and_completion() {
+    use crate::store::SqliteStore;
+
+    let mut h = Harness::new(vec![
+        Behavior::Succeed,
+        Behavior::Fail,
+        Behavior::Unsupported,
+    ]);
+    let mut store = SqliteStore::open(":memory:").unwrap();
+    let benchmarks = h.experiment.suite.benchmarks().unwrap();
+    let commits = ["a", "b"]
+        .into_iter()
+        .map(|id| Commit {
+            id: CommitId(id.into()),
+            committed_at: UNIX_EPOCH,
+            author: "author".into(),
+            commit_message: id.into(),
+        })
+        .collect();
+    run_resolved(
+        &h.experiment,
+        benchmarks,
+        commits,
+        &mut h.builder,
+        &mut store,
+    )
+    .unwrap();
+
+    let history = store
+        .history::<usize>(&HistoryQuery {
+            experiment: 1,
+            benchmark_kind: "test".into(),
+            benchmark_version: 1,
+            benchmark_parameters: None,
+        })
+        .unwrap();
+    assert_eq!(history.records.len(), 6);
+    assert!(matches!(
+        history.records[0].record.outcome,
+        Outcome::Succeeded(0)
+    ));
+    assert!(matches!(
+        history.records[1].record.outcome,
+        Outcome::Failed(_)
+    ));
+    assert!(matches!(
+        history.records[2].record.outcome,
+        Outcome::Unsupported(_)
+    ));
+    assert_eq!(store.last_complete(1).unwrap(), Some(CommitId("b".into())));
+    assert!(store.unfinished_runs(1).unwrap().is_empty());
+}

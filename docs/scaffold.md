@@ -21,7 +21,8 @@ src/
   store/
     mod.rs               Store contract, records, typed history
     reference.rs         Independent reference cache
-    sqlite.rs            SQLite backend placeholder
+    sqlite.rs            SQLite backend and typed history selection
+    sqlite/schema.sql    Versioned storage schema
   view.rs                View contract and frontend series
   benchmarks/
     mcm/
@@ -41,8 +42,11 @@ cargo run --bin run_mcm
 cargo run --bin view_results
 ```
 
-The examples currently exit with explicit `NotImplemented` errors. They do not
-build tools, launch benchmarks, open a database, or manufacture results.
+The examples open/create their SQLite database. They still cannot build tools or
+launch benchmarks: `run_mcm` reaches the Yosys builder stub after registration,
+provided its repository and selection are valid. `view_results` can load an
+existing experiment, then reaches the MCM view stub. An unknown experiment is a
+storage error rather than an empty fabricated result.
 `run_mcm` configures hard-coded coefficient sets; orchestration freezes them once
 before resolving revisions.
 Edit its repository, branch, commit anchor, library, and paper-tool paths when
@@ -50,13 +54,16 @@ the execution phases are implemented. `view_results` shows the typed query and
 view pipeline; rendering is not implemented.
 
 Working pieces are the types, serialization, suite expansion, tool binding,
-reference-cache delegation, Git revision resolution, and sequential orchestration. The orchestration loop
+reference storage, typed SQLite history, Git revision resolution, and sequential
+orchestration. The orchestration loop
 registers frozen definitions and revision order, starts/finalizes attempts, records
-benchmark failures, and completes only processed commits. Its tests use fake
-dependencies; revision resolution has separate tests against temporary Git
-repositories. Builds, timed execution, benchmark-output parsing,
-reference storage, SQLite lifecycle operations, history projection, and graphical
-rendering remain stubs. There is no SQLite dependency yet.
+benchmark failures, and completes only processed commits. Tests cover fake tool
+dependencies with real SQLite, database reopen/interruption behavior, and Git
+resolution against temporary repositories. Builds, timed execution,
+benchmark-output parsing, history projection, and graphical rendering remain stubs.
+
+See [SQLite storage](storage.md) for schema layout, lifecycle rules, reference
+caching, history selection, and the fallible `SqliteStore::open` constructor.
 
 Revision resolution uses the installed Git CLI without fetching, checking out, or
 modifying the worktree. It accepts local branch names and full `refs/heads/` or
@@ -112,11 +119,10 @@ porting notes distinguish historical behavior from the intended Rust contracts.
 1. Implement one coefficient-set MCM comparison: preparation, timed processes,
    parsing, and typed output. Use explicit coefficient sets before adding random
    generation; retain all repeated observations.
-2. Add reference caching, including complete keys, immutable reference IDs,
-   measurement environment, and refresh behavior.
-3. Implement SQLite records and the typed MCM view for one commit, including the
-   existing lifecycle contracts for registration, start/finish, build failures,
-   and commit completion. Finalization must update the same started attempt.
+2. Connect the paper-tool cache to SQLite reference storage. Define complete keys,
+   measurement environment, and refresh behavior; immutable IDs are implemented.
+3. Implement the typed MCM view for one commit. SQLite registration, attempt
+   start/finish, build failures, completion, and typed history are implemented.
 4. Implement cached Yosys builds, then exercise the existing sequential history
    loop with real Git, build, and storage dependencies. Revision resolution is
    already implemented.
@@ -156,8 +162,9 @@ configurable build-profile hierarchy, or universal metric database.
 - Raw artifacts are off by default. Attempt directories are isolated and retained
   only on request; selective file retention and failure-only log policy remain
   context implementation decisions.
-- Choose an explicit attempt-selection policy for views and resume. Preserve all
-  attempts; retry observations must not be pooled as independent repetitions.
+- History selects the latest finished measurement per workload/commit and excludes
+  inspections and unfinished attempts. Automatic resume still needs a runner
+  policy; retries must not be pooled as independent repetitions.
 - Resolve the historical Verilog sizing questions documented with the reference
   before generating production workloads. Version changes affecting results.
 - Typed history is the initial query boundary. Metric indexing, tables, coverage

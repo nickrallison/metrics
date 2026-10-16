@@ -15,7 +15,8 @@
 //! chooses the matching output type; reject inconsistent payload metadata rather
 //! than guessing its schema. Preserve exact-workload filtering and deterministic
 //! revision order. Retry selection must choose attempts explicitly, never pool
-//! retries as extra samples. The initial selection policy is still undecided.
+//! retries as extra samples. SQLite selects the latest finished measurement per
+//! frozen workload and commit, excluding inspection and unfinished attempts.
 //!
 //! Inspection attempts link to their source record and are excluded from normal
 //! history summaries. They may request logs/scripts/netlists, whose generation
@@ -40,7 +41,7 @@ use crate::{
 pub type ExperimentId = i64;
 pub type RecordId = i64;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BenchmarkDefinition {
     pub kind: String,
     pub version: u32,

@@ -39,7 +39,7 @@ pub enum RevisionSelection {
     Since(CommitId),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Commit {
     pub id: CommitId,
     pub committed_at: SystemTime,

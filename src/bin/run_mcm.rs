@@ -46,7 +46,7 @@ fn main() -> Result<()> {
         repository: experiment.history.repository.clone(),
         cache_dir: "output/builds/yosys".into(),
     };
-    let mut store = SqliteStore::new("output/mcm.sqlite");
+    let mut store = SqliteStore::open("output/mcm.sqlite")?;
 
     println!(
         "Prepared {} MCM workloads",

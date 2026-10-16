@@ -6,7 +6,7 @@ use benchmarks::{
 };
 
 fn main() -> Result<()> {
-    let store = SqliteStore::new("output/mcm.sqlite");
+    let store = SqliteStore::open("output/mcm.sqlite")?;
     let query = HistoryQuery {
         experiment: 1,
         benchmark_kind: mcm::KIND.into(),

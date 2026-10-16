@@ -50,12 +50,22 @@ the execution phases are implemented. `view_results` shows the typed query and
 view pipeline; rendering is not implemented.
 
 Working pieces are the types, serialization, suite expansion, tool binding,
-reference-cache delegation, and sequential orchestration. The orchestration loop
+reference-cache delegation, Git revision resolution, and sequential orchestration. The orchestration loop
 registers frozen definitions and revision order, starts/finalizes attempts, records
 benchmark failures, and completes only processed commits. Its tests use fake
-dependencies; Git traversal, builds, timed execution, parsing,
+dependencies; revision resolution has separate tests against temporary Git
+repositories. Builds, timed execution, benchmark-output parsing,
 reference storage, SQLite lifecycle operations, history projection, and graphical
 rendering remain stubs. There is no SQLite dependency yet.
+
+Revision resolution uses the installed Git CLI without fetching, checking out, or
+modifying the worktree. It accepts local branch names and full `refs/heads/` or
+`refs/remotes/` references. Selections are canonicalized to full commit IDs;
+duplicate aliases and commits outside the captured first-parent history are
+rejected. Metadata includes committer time, author name/email, and full messages.
+Text is requested as UTF-8; undecodable output is an explicit error. The commands
+use Git's documented [history formatting](https://git-scm.com/docs/git-log) and
+[revision verification](https://git-scm.com/docs/git-rev-parse) interfaces.
 
 Each invocation currently creates a new experiment; automatic resume and input
 digest verification remain unimplemented. Benchmark failures are terminal outcomes
@@ -107,8 +117,9 @@ porting notes distinguish historical behavior from the intended Rust contracts.
 3. Implement SQLite records and the typed MCM view for one commit, including the
    existing lifecycle contracts for registration, start/finish, build failures,
    and commit completion. Finalization must update the same started attempt.
-4. Implement branch traversal and cached Yosys builds, then exercise the existing
-   sequential history loop with those real dependencies.
+4. Implement cached Yosys builds, then exercise the existing sequential history
+   loop with real Git, build, and storage dependencies. Revision resolution is
+   already implemented.
 5. Add verified resume, explicit reruns, input digest checks, and artifact
    inspection. These must not silently change workloads or replace measurements.
 6. Add a graphical renderer, a synthesis view, and a design-manifest adapter.

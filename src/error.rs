@@ -8,6 +8,17 @@ pub enum Error {
     Unsupported(String),
     #[error("{0}")]
     Io(#[from] std::io::Error),
+    #[error("git {command} failed in {repository:?} ({status}): {stderr}")]
+    Git {
+        repository: std::path::PathBuf,
+        command: String,
+        status: std::process::ExitStatus,
+        stderr: String,
+    },
+    #[error("invalid revision selection: {0}")]
+    InvalidRevision(String),
+    #[error("invalid Git output: {0}")]
+    InvalidGitOutput(String),
     #[error("{0}")]
     Serialization(#[from] serde_json::Error),
 }

@@ -1,10 +1,12 @@
 # Yosys perf recordings
 
 ```sh
-cargo run --bin run_mcm -- --perf --workload 0 --commit a31d95ea005b
+cargo run --bin run_mcm -- --workload 0 --commit f47cc3bfa0f4
 ```
 
-`--perf` runs the normal measurements, then extra diagnostic Yosys invocations
+Profiling is enabled by default in `run_mcm`; use `--perf=false` to disable it.
+Bare `--perf` and `--perf=true` also enable it. Profiling runs the normal
+measurements, then extra diagnostic Yosys invocations
 for MCM, baseline synthesis, and synthesis with MCM. Each phase and repetition
 gets its own recording and flamegraph. The paper reference is not profiled.
 Recording and rendering do not contribute to stored timing samples or add
@@ -62,7 +64,7 @@ DEBUGINFOD_URLS= perf script -i perf.data \
   Check `perf version --build-options` for `dwarf-unwind` support via libdw or
   libunwind. Distribution builds normally supply the runtime libraries.
 - LLVM's addr2line, defaulting to `/usr/bin/llvm-addr2line-16`. Select another
-  installation with `--perf-addr2line /path/to/llvm-addr2line` alongside `--perf`.
+  installation with `--perf-addr2line /path/to/llvm-addr2line`.
 - Perl and both scripts from [FlameGraph](https://github.com/brendangregg/FlameGraph)
   on PATH. The scripts are run using Perl; no additional CPAN modules are needed.
 - Optimized Yosys binaries with debug information. The builder now uses CMake

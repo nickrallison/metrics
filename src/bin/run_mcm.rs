@@ -52,15 +52,21 @@ struct Args {
     /// Parallel compiler jobs, capped at available CPUs; defaults to that cap.
     #[arg(long, value_name = "N")]
     jobs: Option<NonZeroUsize>,
-    /// Record extra Yosys invocations with perf and retain source flamegraphs.
-    #[arg(long)]
+    /// Record extra Yosys invocations and retain flamegraphs; use --perf=false to disable.
+    #[arg(
+        long,
+        default_value_t = true,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        require_equals = true
+    )]
     perf: bool,
-    /// Address resolver for perf script; requires --perf.
+    /// Address resolver for perf script.
     #[arg(
         long,
         value_name = "PATH",
-        default_value = "/usr/bin/llvm-addr2line-16",
-        requires = "perf"
+        default_value = "/usr/bin/llvm-addr2line-16"
     )]
     perf_addr2line: PathBuf,
 }
@@ -99,13 +105,81 @@ fn main() -> Result<()> {
         output,
         history: BranchHistory {
             repository: "../yosys".into(),
-            branch: "main".into(),
+            branch: "nick/mcm".into(),
         },
-        // Two adjacent mainline commits, oldest first, to check compiler reuse.
-        // Use a fresh --output-dir to exercise both builds instead of installed hits.
+        // Every first-parent commit mentioning MCM or changing MCM files,
+        // oldest first. Include tests, comments, profiling, and build fixes.
         revisions: RevisionSelection::Explicit(vec![
-            CommitId("8802950c22d4dd32abd482f409c83396d04bd496".into()),
-            CommitId("a31d95ea005b35bb894876e27627030bf8ef2c8a".into()),
+            // Original MCM pass merge.
+            CommitId("fb1a2fdae7a84e327d239aec6e637fca4f037ae7".into()),
+            // Release merge changing MCM source.
+            CommitId("70bf41c29bef52fe513cf81552114b09ff325caa".into()),
+            // Source-location refactor merge changing MCM source.
+            CommitId("ec3ddf1adf8d66f15078356454a3c7e80f3d5c1c".into()),
+            // Refactor using the HCUB paper.
+            CommitId("7d3b4d260376d72e2f731040a6e5c1fc50cfedc2".into()),
+            // Add test scripts.
+            CommitId("6029ae358528532585509b747941c7a9b16eeb4d".into()),
+            // Start profiling script.
+            CommitId("f444f7d942409fa4c673856b6e85f5a66af7344c".into()),
+            // Improve profiling.
+            CommitId("293f668020c7024ad26863d31f09233695337b1d".into()),
+            // Add profiling test files.
+            CommitId("f41e296144b3a741d63409b7fb884eef56e6881c".into()),
+            // Add profiling comment.
+            CommitId("84d5e8a897b5468f7f4b985aee300255c4fc2c5b".into()),
+            // Add cell-count statistics.
+            CommitId("aa0e05f93a2a27a8e3a88c7acf012198a1376fc9".into()),
+            // Add size comparison.
+            CommitId("f836a636e3d838828e0f721320b6f14d50d851cc".into()),
+            // Re-enable original pass options.
+            CommitId("b04205e564da25c0246fa518b7b3f5bdd5435ed8".into()),
+            // Remove test files.
+            CommitId("edf018257b2fda232979b6051c46152ad74b0ab5".into()),
+            // Start generating Python on the fly.
+            CommitId("921ba6541c557fb4d07dcebc5b3b6a94832ad804".into()),
+            // Get on-the-fly generation working.
+            CommitId("49710f7834acb9c643d101f0b24bb4b1f42b4b68".into()),
+            // Update profiling sampling distribution.
+            CommitId("a1780f80e3d5e3bb0a7c701eb475fb7a24ccb1cb".into()),
+            // Add comments and fix test printing.
+            CommitId("ac5d1cc04f14f371cbff32503d394e4ce257ba20".into()),
+            // Update settings from test results.
+            CommitId("421b0ed545191ccec5a14bd30be998561cf01957".into()),
+            // Add big-integer support.
+            CommitId("b4452ec0f95fe901513d303d39240129bae76e57".into()),
+            // Update big-integer tests.
+            CommitId("102e29d3d1ed70a89395329d90b77d7ef6aa6a46".into()),
+            // Fix negative coefficients.
+            CommitId("5797a7c4c2833a5de64816ebf4f33347c670dc29".into()),
+            // Add containers and uint64_t fast path.
+            CommitId("c579a824c1a3cc96f07602cc63576431357f5a48".into()),
+            // Fix overflow behavior.
+            CommitId("d5fbbe2d74c556aca021fe4d85ee94218b015249".into()),
+            // Add <bit> and rearrange search results.
+            CommitId("07195e5af7c9399e1be49be3384b51308c86b671".into()),
+            // Fix macOS build.
+            CommitId("dd2741eb18147cc4266fcad1e92821fcc4e7008c".into()),
+            // Limit inverse-set bit width.
+            CommitId("14dba6a6a5ba30c0706cad2428b733955b4bd55b".into()),
+            // Delete test.ys.
+            CommitId("66281e952aec6c28bfe5f23ae8d4eb08fd740fe8".into()),
+            // Add a_op_valid fast paths.
+            CommitId("5355fa19fb0f7fb78f6d17c0223b56da71f0c8b2".into()),
+            // Reuse previous distance-test results.
+            CommitId("ea4b19e8e44019ccbaaf681bd795b77a0efe73e9".into()),
+            // Remove forward search from exact tests and save intermediate work.
+            CommitId("8d8437f6cffe723f1b6e3c6d90d7734a513a98fb".into()),
+            // Remove unused comments.
+            CommitId("481c9af00b5cbcc2d99898e3b0e3a6f5b29e337b".into()),
+            // Profile against ABC without MCM.
+            CommitId("962674201bc1aa17812276df86c43168583e4ed0".into()),
+            // Fix unused parameters.
+            CommitId("c55eb05cb151378b50a26a67ef3dd98e29e81765".into()),
+            // Add average area savings.
+            CommitId("d77d3ecf341fd806466296d8ad402cf7f95fa9f8".into()),
+            // Fix Visual Studio build; final branch state.
+            CommitId("f47cc3bfa0f4e412e5c0bc6dcd3761891f98a6f4".into()),
         ]),
         suite: McmSuite {
             coefficient_sets: CoefficientSets::Generated(CoefficientGenerator::default()),

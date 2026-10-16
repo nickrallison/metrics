@@ -48,15 +48,30 @@ cargo run --bin view_results -- --experiment 5 --attempts
 cargo run --bin view_results -- --experiment 5 --attempts --json
 ```
 
-The current selection is two adjacent mainline revisions, `8802950c22d4` then
-`a31d95ea005b`, to check compiler cache reuse. To compile both instead of reusing
-existing installations, choose a fresh output root:
+The default selection follows `nick/mcm` and includes all 35 matching commits
+on its first-parent history, oldest ancestor first. It includes all 32 `mcm:`
+commits, the original MCM pass merge (`fb1a2fdae7a8`), and the release and
+source-location refactor merges that changed MCM source (`70bf41c29bef` and
+`ec3ddf1adf8d`). The final point is `f47cc3bfa0f4`.
+
+Selection includes any commit whose message mentions MCM or whose changed paths
+contain MCM, including files inside MCM directories. Test-only, profiling-only,
+comment, and build-fix commits are all separate data points. The full immutable
+IDs are pinned with descriptions in `run_mcm.rs`; the list does not automatically
+expand when the branch advances. Ancestry determines execution order, since
+rebased commits can have author dates older than their ancestors.
+Changing the default branch from `main` to `nick/mcm` creates a different experiment
+from the earlier mainline cache check. `--experiment ID` still loads that saved
+experiment's branch and revisions.
+
+To exercise compilation instead of reusing existing installations, choose a fresh
+output root:
 
 ```sh
 cargo run --bin run_mcm -- --output-dir output-ccache-check
 ```
 
-Both builds share `output-ccache-check/builds/ccache`. Each build log under
+All builds share `output-ccache-check/builds/ccache`. Each build log under
 `output-ccache-check/builds/yosys-relwithdebinfo/logs` ends compilation with cumulative ccache
 statistics. The second build should add cache hits; dependencies that changed
 still compile. Repeating the command reuses the completed installations.
@@ -105,7 +120,8 @@ never changes stored timing observations. Diagnostic invocations add no samples.
 `--keep-artifacts` enables logs, scripts, and netlists for the example. Retained
 files follow the [output layout](outputs.md) selected by `--output-dir` and `--name`.
 
-`--perf` records additional Yosys invocations after measured samples, generating
+Profiling is enabled by default (`--perf=false` disables it). It records
+additional Yosys invocations after measured samples, generating
 `perf.data` and `flamegraph.svg` for each phase/repetition. These artifacts are
 retained independently of the normal retention policy. See [profiling](profiling.md)
 for prerequisites, commands, and directory layout.

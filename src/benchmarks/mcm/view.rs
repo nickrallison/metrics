@@ -46,7 +46,7 @@ impl View for McmView {
         if history
             .benchmarks
             .values()
-            .any(|benchmark| benchmark.kind != KIND || benchmark.version != VERSION)
+            .any(|benchmark| benchmark.kind != KIND || ![1, VERSION].contains(&benchmark.version))
         {
             return Err(Error::InvalidView(
                 "MCM history must use the supported MCM kind/version".into(),

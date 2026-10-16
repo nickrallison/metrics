@@ -36,4 +36,12 @@ pub enum Error {
     Storage(String),
     #[error("invalid view data: {0}")]
     InvalidView(String),
+    #[error("benchmark error: {0}")]
+    Benchmark(String),
+    #[error("{command} failed ({status}): {detail}")]
+    Process {
+        command: String,
+        status: std::process::ExitStatus,
+        detail: String,
+    },
 }

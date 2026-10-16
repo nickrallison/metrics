@@ -95,10 +95,19 @@ fn run() -> Result<()> {
             Error::Storage("no experiments recorded; run an experiment first".into())
         })?,
     };
+    // Versions 1 and 2 share the output schema; their generation procedures
+    // remain separate experiments and are never combined in one projection.
+    let definition = store.experiment(experiment)?;
+    let versions: std::collections::BTreeSet<_> = definition.benchmarks.iter()
+        .filter(|benchmark| benchmark.kind == mcm::KIND).map(|benchmark| benchmark.version).collect();
+    if versions.len() > 1 {
+        return Err(Error::InvalidView("experiment contains multiple MCM procedure versions".into()));
+    }
+    let version = versions.first().copied().unwrap_or(mcm::VERSION);
     let query = HistoryQuery {
         experiment,
         benchmark_kind: mcm::KIND.into(),
-        benchmark_version: mcm::VERSION,
+        benchmark_version: version,
         benchmark_parameters: None,
     };
     let history = store.history::<McmOutput>(&query)?;

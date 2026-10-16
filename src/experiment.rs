@@ -122,6 +122,7 @@ where
             };
             let outcome = {
                 let mut context = RunContext::new(path, experiment.artifacts, store);
+                context.reference_scope = Some(format!("experiment:{experiment_id}"));
                 match benchmark.run(&input, &mut context) {
                     Ok(output) => Outcome::Succeeded(output),
                     Err(Error::Unsupported(reason)) => Outcome::Unsupported(reason),

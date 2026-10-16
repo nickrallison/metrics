@@ -1,7 +1,8 @@
 use std::{
+    fs,
     path::PathBuf,
-    process::{Command, Output},
-    time::Duration,
+    process::{Command, Output, Stdio},
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -37,7 +38,11 @@ pub struct ProcessOutput {
 pub struct RunContext<'a, C: ReferenceCache> {
     pub workspace: PathBuf,
     pub artifacts: ArtifactPolicy,
+    /// Only reuse reference timings within this compatible measurement session.
+    /// `None` forces fresh reference measurements. Experiments set their own ID.
+    pub reference_scope: Option<String>,
     cache: &'a mut C,
+    processes: usize,
 }
 
 impl<'a, C: ReferenceCache> RunContext<'a, C> {
@@ -45,7 +50,9 @@ impl<'a, C: ReferenceCache> RunContext<'a, C> {
         Self {
             workspace,
             artifacts,
+            reference_scope: None,
             cache,
+            processes: 0,
         }
     }
 
@@ -53,10 +60,31 @@ impl<'a, C: ReferenceCache> RunContext<'a, C> {
     /// Preparation, parsing, and later artifact copying are outside this interval.
     /// Preserve nonzero termination and useful error context instead of treating
     /// captured stdout as proof of success. Timeout/cancellation support is pending.
-    pub fn run_process(&mut self, _command: &mut Command) -> Result<ProcessOutput> {
-        Err(Error::NotImplemented(
-            "timed processes and artifact retention",
-        ))
+    pub fn run_process(&mut self, command: &mut Command) -> Result<ProcessOutput> {
+        if command.get_current_dir().is_none() {
+            command.current_dir(&self.workspace);
+        }
+        command.stdin(Stdio::null());
+        let description = format!("{command:?}");
+        let index = self.processes;
+        self.processes += 1;
+        let start = Instant::now();
+        let output = command.output()?;
+        let elapsed = start.elapsed();
+        if self.artifacts.logs {
+            fs::write(self.workspace.join(format!("process-{index:03}.stdout.log")), &output.stdout)?;
+            fs::write(self.workspace.join(format!("process-{index:03}.stderr.log")), &output.stderr)?;
+        }
+        if !output.status.success() {
+            // Yosys errors normally go to stderr; other tools may use stdout.
+            let detail = if output.stderr.is_empty() { &output.stdout } else { &output.stderr };
+            let tail = &detail[detail.len().saturating_sub(8192)..];
+            return Err(Error::Process {
+                command: description, status: output.status,
+                detail: String::from_utf8_lossy(tail).trim().into(),
+            });
+        }
+        Ok(ProcessOutput { output, elapsed })
     }
 
     pub fn reference<T: DeserializeOwned>(&self, key: &str) -> Result<Option<Reference<T>>> {

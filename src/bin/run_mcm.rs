@@ -29,7 +29,7 @@ fn main() -> Result<()> {
                 liberty: "../yosys/tests/techmap/mcm/NangateOpenCellLibrary_typical.lib".into(),
             },
             paper: PaperTool {
-                executable: "tools/acm".into(),
+                executable: "../yosys/tests/techmap/mcm/synth/acm".into(),
             },
             options: McmOptions {
                 max_depth: 16,

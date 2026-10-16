@@ -17,6 +17,8 @@
 //! comparison unless partial-result fields are explicitly introduced later.
 
 mod output;
+mod parse;
+mod run;
 mod view;
 
 pub use output::{McmOutput, PaperStats, YosysStats};
@@ -27,7 +29,7 @@ use std::{num::NonZeroU32, path::PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Error, Result,
+    Result,
     benchmark::{Benchmark, RunContext},
     build::Yosys,
     design::CellLibrary,
@@ -36,7 +38,8 @@ use crate::{
 };
 
 pub const KIND: &str = "mcm";
-pub const VERSION: u32 = 1;
+// Version 2 uses full signed coefficient literals and full-width products.
+pub const VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaperTool {
@@ -117,11 +120,9 @@ impl Benchmark for McmBenchmark {
 
     fn run<C: ReferenceCache>(
         &self,
-        _input: &McmInput,
-        _context: &mut RunContext<'_, C>,
+        input: &McmInput,
+        context: &mut RunContext<'_, C>,
     ) -> Result<McmOutput> {
-        // TODO: Generate Verilog, profile MCM, obtain the paper reference,
-        // then synthesize with/without MCM and collect repeated samples.
-        Err(Error::NotImplemented("MCM comparison and parsing"))
+        run::run(self, input, context)
     }
 }

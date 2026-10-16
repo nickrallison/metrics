@@ -214,10 +214,12 @@ struct Harness {
     store: TestStore,
     events: Events,
     workspaces: Workspaces,
+    _output: tempfile::TempDir,
 }
 
 impl Harness {
     fn new(behaviors: Vec<Behavior>) -> Self {
+        let output = tempfile::tempdir().unwrap();
         let events = Events::default();
         let workspaces = Workspaces::default();
         let benchmarks = behaviors
@@ -232,6 +234,10 @@ impl Harness {
             .collect();
         Self {
             experiment: Experiment {
+                output: OutputLayout {
+                    output_dir: output.path().into(),
+                    experiment: "test".into(),
+                },
                 history: BranchHistory {
                     repository: "unused".into(),
                     branch: "main".into(),
@@ -259,6 +265,7 @@ impl Harness {
             },
             events,
             workspaces,
+            _output: output,
         }
     }
 
@@ -387,10 +394,58 @@ fn requested_artifacts_survive_and_are_linked_to_the_attempt() {
     let mut h = Harness::new(vec![Behavior::Succeed, Behavior::Fail]);
     h.experiment.artifacts.logs = true;
     h.execute().unwrap();
+    let directory = PathBuf::from(
+        h.store.definition.as_ref().unwrap().configuration["run_directory"]
+            .as_str()
+            .unwrap(),
+    );
+    let timestamp = directory.file_name().unwrap().to_str().unwrap();
+    chrono::DateTime::parse_from_rfc3339(timestamp).unwrap();
+    assert_eq!(
+        directory.parent().unwrap(),
+        h.experiment.output.experiment_directory().unwrap()
+    );
+    let first_paths = h.workspaces.borrow().clone();
     for start in &h.store.starts {
         let path = start.artifacts.as_ref().unwrap();
+        assert_eq!(
+            *path,
+            directory
+                .join(format!(
+                    "{:04}-test-{}",
+                    start.benchmark_index, start.commit.id.0
+                ))
+                .join("build_artifacts")
+        );
         assert!(path.join("probe").is_file());
-        std::fs::remove_dir_all(path).unwrap();
+    }
+    h.execute().unwrap();
+    let second_directory = h.store.definition.as_ref().unwrap().configuration["run_directory"]
+        .as_str()
+        .unwrap();
+    assert_ne!(directory, PathBuf::from(second_directory));
+    assert!(first_paths.iter().all(|path| path.join("probe").is_file()));
+}
+
+#[test]
+fn retained_outputs_survive_interruption_and_storage_failure() {
+    for panic in [false, true] {
+        let mut h = Harness::new(vec![if panic {
+            Behavior::Panic
+        } else {
+            Behavior::Succeed
+        }]);
+        h.experiment.artifacts.logs = true;
+        h.store.fail_finish = !panic;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| h.execute()));
+        if panic {
+            assert!(result.is_err());
+        } else {
+            assert!(result.unwrap().is_err());
+        }
+        let path = h.store.starts[0].artifacts.as_ref().unwrap();
+        assert!(path.join("probe").is_file());
+        assert!(h.store.finishes.is_empty());
     }
 }
 

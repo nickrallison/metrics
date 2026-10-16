@@ -33,8 +33,8 @@ pub struct ProcessOutput {
 /// Isolated workspace and process/cache helpers for one comparison attempt.
 ///
 /// Use fresh temporary paths for repeated invocations and remove temporary
-/// parser inputs after use. Retained artifacts need distinct attempt paths.
-/// The permanent directory convention is still an open implementation decision.
+/// parser inputs after use. Experiment orchestration places retained workspaces
+/// under its configured output layout, timestamp, and benchmark/commit directory.
 pub struct RunContext<'a, C: ReferenceCache> {
     pub workspace: PathBuf,
     pub artifacts: ArtifactPolicy,

@@ -11,6 +11,7 @@ use benchmarks::{
         synth::SynthStats,
     },
     history::{Commit, CommitId},
+    output::OutputLayout,
     store::{
         BenchmarkDefinition, ExperimentDefinition, Outcome, Reference, RunPurpose, RunRecord,
         RunStart, SqliteStore, Store,
@@ -153,7 +154,11 @@ fn cli_projects_sqlite_history_selects_latest_experiment_and_reports_failures() 
     .unwrap();
     assert_eq!(area["series"].as_array().unwrap().len(), 1);
     assert_eq!(area["series"][0]["unit"], "%");
-    let report: Value = serde_json::from_str(&text(&view(&path, &["--experiment", &first_id, "--details", "--json"]))).unwrap();
+    let report: Value = serde_json::from_str(&text(&view(
+        &path,
+        &["--experiment", &first_id, "--details", "--json"],
+    )))
+    .unwrap();
     let summary = &report["commits"][0]["summary"];
     assert_eq!(summary["runtime_ratio"], 1.5);
     assert_eq!(summary["average_area_savings_percent"], 50.0);
@@ -198,4 +203,33 @@ fn cli_reports_empty_missing_and_unknown_experiments_without_creating_databases(
     assert!(!unknown.status.success());
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("does not exist"));
     drop(store);
+}
+
+#[test]
+fn cli_resolves_named_experiment_under_configured_output_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let output = OutputLayout {
+        output_dir: root.path().into(),
+        experiment: "manual-mcm".into(),
+    };
+    let mut store = SqliteStore::open(output.database_path().unwrap()).unwrap();
+    let (definition, _) = fixture();
+    store.register_experiment(&definition).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_view_results"))
+        .arg("--output-dir")
+        .arg(root.path())
+        .args(["--name", "manual-mcm", "--json"])
+        .output()
+        .unwrap();
+    let data: Value = serde_json::from_str(&text(&result)).unwrap();
+    assert!(data["series"][0]["points"][0]["value"].is_null());
+    assert_eq!(data["series"][0]["points"][0]["coverage"]["total"], 1);
+    let missing = Command::new(env!("CARGO_BIN_EXE_view_results"))
+        .arg("--output-dir")
+        .arg(root.path())
+        .args(["--name", "unknown"])
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(!root.path().join("unknown").exists());
 }

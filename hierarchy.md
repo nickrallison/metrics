@@ -53,7 +53,7 @@ and each benchmark controls its own subprocesses and repetitions.
 
 | Type                                       | High-level overview                                                                                                                                                    | Responsibility                                                                                                                                                  |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`Experiment<S>`](src/experiment.rs)       | One investigation of tool behavior across revisions, using a fixed testing plan. For example, tracking MCM performance over Yosys history.                             | Contains branch history, revision selection, suite, and artifact policy. The `run` function coordinates execution and returns an `ExperimentId`.                |
+| [`Experiment<S>`](src/experiment.rs)       | One investigation of tool behavior across revisions, using a fixed testing plan. For example, tracking MCM performance over Yosys history.                             | Contains output layout, branch history, revision selection, suite, and artifact policy. The `run` function coordinates execution and returns an `ExperimentId`.                |
 | [`Builder`](src/build/mod.rs)              | Obtains the exact program version to test, so each measurement corresponds to the intended revision.                                                                   | Turns a `Commit` into its associated `Tool`, including build/cache handling.                                                                                    |
 | [`Suite`](src/suite.rs)                    | Defines which problems to test and their shared settings. For example, choosing 40 coefficient sets to cover a range of MCM problems.                                  | `benchmarks()` expands configuration into concrete benchmarks. `input(&Tool)` binds the current installation and supporting tools into benchmark runtime input. |
 | [`Benchmark`](src/benchmark/mod.rs)        | A repeatable test recipe for one concrete problem, including the related procedures needed to compare its results.                                                     | Defines associated `Input` and `Output`, procedure `kind`/`version`, and execution through `RunContext`. Owns parsing and repetition strategy.                  |
@@ -123,6 +123,22 @@ View::Output = the output type loaded from storage
 The `D: Store` bound already includes `ReferenceCache`; both names above show the
 backend's shared role. The current framework uses static dispatch through generic
 functions.
+
+## Output locations
+
+[`OutputLayout`](src/output.rs) defines where a named experiment keeps its
+database and run files. `Experiment::output` carries this configuration so every
+benchmark in an invocation uses the same output root and timestamp.
+
+The human name, such as `mcm`, groups invocations into one directory/database.
+An `ExperimentId` identifies an individual invocation inside that database. Each
+invocation also gets a readable UTC RFC 3339 timestamp directory. Retained files
+are grouped by workload position, kind, and commit, under `build_artifacts`.
+This keeps earlier measurements available when the same named experiment is run
+again. See [Output layout](docs/outputs.md) for paths and CLI options.
+
+The private `Workspace` type controls cleanup: temporary workspaces are removed
+on return or unwind, while retained workspaces preserve their files.
 
 ## Revision selection and building
 

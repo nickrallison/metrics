@@ -1,7 +1,7 @@
-use std::num::NonZeroU32;
+use std::{num::NonZeroU32, path::PathBuf};
 
 use benchmarks::{
-    Result,
+    Error, Result,
     benchmark::ArtifactPolicy,
     benchmarks::mcm::{
         self, CoefficientGenerator, CoefficientSets, McmOptions, McmOutput, McmSuite, McmView,
@@ -11,11 +11,52 @@ use benchmarks::{
     design::CellLibrary,
     experiment::{self, Experiment},
     history::{BranchHistory, CommitId, RevisionSelection},
+    output::OutputLayout,
     store::{HistoryQuery, SqliteStore, Store},
 };
 
 fn main() -> Result<()> {
+    let mut output = OutputLayout {
+        output_dir: PathBuf::from("output"),
+        experiment: "mcm".into(),
+    };
+    let mut artifacts = ArtifactPolicy::default();
+    let mut args = std::env::args().skip(1);
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--help" | "-h" => {
+                println!(
+                    "Usage: run_mcm [--output-dir PATH] [--name NAME] [--keep-artifacts]\nDefaults: output directory 'output', experiment name 'mcm', raw artifacts off."
+                );
+                return Ok(());
+            }
+            "--output-dir" => {
+                output.output_dir = args
+                    .next()
+                    .ok_or_else(|| Error::Output("--output-dir requires a path".into()))?
+                    .into()
+            }
+            "--name" => {
+                output.experiment = args
+                    .next()
+                    .ok_or_else(|| Error::Output("--name requires an experiment name".into()))?
+            }
+            "--keep-artifacts" => {
+                artifacts = ArtifactPolicy {
+                    logs: true,
+                    scripts: true,
+                    netlists: true,
+                }
+            }
+            value => {
+                return Err(Error::Output(format!(
+                    "unknown argument {value:?}; use --help"
+                )));
+            }
+        }
+    }
     let experiment = Experiment {
+        output,
         history: BranchHistory {
             repository: "../yosys".into(),
             branch: "main".into(),
@@ -42,20 +83,24 @@ fn main() -> Result<()> {
             },
             repetitions: NonZeroU32::new(1).unwrap(),
         },
-        artifacts: ArtifactPolicy::default(),
+        artifacts,
     };
 
     let mut builder = YosysBuilder {
         repository: experiment.history.repository.clone(),
-        cache_dir: "output/builds/yosys".into(),
+        cache_dir: experiment.output.output_dir.join("builds/yosys"),
     };
-    let mut store = SqliteStore::open("output/mcm.sqlite")?;
+    let mut store = SqliteStore::open(experiment.output.database_path()?)?;
 
     println!(
         "Configured {} MCM workloads",
         experiment.suite.coefficient_sets.len()
     );
     let id = experiment::run(&experiment, &mut builder, &mut store)?;
+    let definition = store.experiment(id)?;
+    if let Some(path) = definition.configuration["run_directory"].as_str() {
+        println!("Run directory: {path}");
+    }
     let history = store.history::<McmOutput>(&HistoryQuery {
         experiment: id,
         benchmark_kind: mcm::KIND.into(),

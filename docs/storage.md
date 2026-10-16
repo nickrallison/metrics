@@ -25,6 +25,12 @@ Serde JSON. Relational keys identify experiments, workload positions, commits,
 and attempts. Matching workload definitions may occupy distinct positions;
 completion requires each position to have its own measurement.
 
+The supplied binaries use `OutputLayout::database_path()` to open
+`<output_dir>/<name>/database.sqlite`. Orchestration records each invocation's
+absolute `run_directory` in its frozen configuration, and retained artifact
+directories in attempt metadata. Custom callers still supply the `Store`
+implementation, including in-memory stores for tests.
+
 ## Lifecycle
 
 Registering always creates a new experiment and freezes its workload/revision

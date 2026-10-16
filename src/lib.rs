@@ -15,6 +15,7 @@ pub mod design;
 pub mod error;
 pub mod experiment;
 pub mod history;
+pub mod output;
 pub mod store;
 pub mod suite;
 pub mod view;

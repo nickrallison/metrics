@@ -4,6 +4,8 @@
 cargo run --bin run_mcm
 cargo run --bin view_results
 cargo run --bin view_results -- --experiment 7 --metric area --json
+cargo run --bin run_mcm -- --output-dir output --name manual-mcm --keep-artifacts
+cargo run --bin view_results -- --output-dir output --name manual-mcm --details
 ```
 
 The runner uses hard-coded repository, branch, revision selection, coefficients,
@@ -48,13 +50,18 @@ including failure. Requested logs retain each process's stdout/stderr; requested
 scripts retain the generated input and phase scripts. Requested netlists come
 from separate diagnostic invocations after measured runs, so output generation
 never changes stored timing observations. Diagnostic invocations add no samples.
+`--keep-artifacts` enables logs, scripts, and netlists for the example. Retained
+files follow the [output layout](outputs.md) selected by `--output-dir` and `--name`.
 
-The viewer defaults to the latest registered experiment and both metrics. Use
+The viewer defaults to `output/mcm/database.sqlite`, the latest registered
+experiment, and both metrics. Use `--output-dir PATH`, `--name NAME`,
 `--database PATH`, `--experiment ID`, `--metric runtime|area|all`, and `--json` as
 needed. Text shows values and included/selected workload counts; JSON exports the
 same series with full commit IDs, nullable values, and exclusion reasons. Missing,
 failed, unsupported, empty, or invalid measurements are explicit exclusions.
 Commits without finished attempts still get missing points, in frozen order.
+Older data at `output/mcm.sqlite` remains accessible with
+`cargo run --bin view_results -- --database output/mcm.sqlite`.
 
 Runtime ratio averages repetitions per workload, then divides mean Yosys runtime
 by mean paper runtime on the same matched workload set. It does not average

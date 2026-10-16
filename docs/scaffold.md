@@ -88,11 +88,13 @@ and do not stop the sweep. Build, input setup, workspace, and storage failures
 stop execution before completing the affected commit. Successful orchestration
 means the comparisons were processed, not that every comparison succeeded.
 
-With default retention, each attempt uses a temporary directory cleaned on return
-or unwind. Requested artifacts keep a unique workspace under
-`output/artifacts/<experiment>/attempt-*`, whose absolute path is recorded with
-the attempt. MCM retains only the requested logs, scripts/input design, and
-diagnostic netlists; scratch files are removed even on failure.
+`Experiment::output` selects an `OutputLayout` with an output directory and a
+human experiment name. Each invocation creates a UTC RFC 3339 timestamp directory.
+With default retention, temporary attempt workspaces beneath it are cleaned on
+return or unwind. Requested artifacts go directly into
+`<output_dir>/<name>/<timestamp>/<index>-<kind>-<commit>/build_artifacts/`;
+the absolute path is recorded with the attempt. MCM retains only requested logs,
+scripts/input design, and diagnostic netlists. See [Output layout](outputs.md).
 
 ## Behavior contracts
 

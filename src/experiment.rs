@@ -18,7 +18,11 @@
 //! job graph are deferred. Registration currently starts a new experiment;
 //! automatic resume and input digest verification are not implemented yet.
 
-use std::{fs, path::PathBuf, time::SystemTime};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
 use serde::Serialize;
 use tempfile::TempDir;
@@ -28,6 +32,7 @@ use crate::{
     benchmark::{ArtifactPolicy, Benchmark, RunContext},
     build::Builder,
     history::{BranchHistory, Commit, RevisionSelection},
+    output::OutputLayout,
     store::{
         BenchmarkDefinition, ExperimentDefinition, ExperimentId, Outcome, RunPurpose, RunStart,
         Store,
@@ -37,6 +42,7 @@ use crate::{
 
 #[derive(Debug, Serialize)]
 pub struct Experiment<S: Suite> {
+    pub output: OutputLayout,
     pub history: BranchHistory,
     pub revisions: RevisionSelection,
     pub suite: S,
@@ -86,8 +92,11 @@ where
             })
         })
         .collect::<Result<Vec<_>>>()?;
+    let run_directory = experiment.output.create_run_directory()?;
+    let mut configuration = serde_json::to_value(experiment)?;
+    configuration["run_directory"] = serde_json::to_value(&run_directory)?;
     let experiment_id = store.register_experiment(&ExperimentDefinition {
-        configuration: serde_json::to_value(experiment)?,
+        configuration,
         benchmarks: definitions.clone(),
         commits: commits.clone(),
     })?;
@@ -107,7 +116,8 @@ where
             let retain = experiment.artifacts.logs
                 || experiment.artifacts.scripts
                 || experiment.artifacts.netlists;
-            let workspace = workspace(experiment_id, retain)?;
+            let workspace =
+                workspace(&run_directory, &commit, benchmark_index, definition, retain)?;
             let path = fs::canonicalize(workspace.path())?;
             let record = store.start_run(&RunStart {
                 experiment: experiment_id,
@@ -118,13 +128,8 @@ where
                 purpose: RunPurpose::Measurement,
                 artifacts: retain.then(|| path.clone()),
             })?;
-            // Keep requested artifacts even if the benchmark panics or finalization fails.
-            let _cleanup = if retain {
-                let _ = workspace.keep();
-                None
-            } else {
-                Some(workspace)
-            };
+            // Temporary workspaces clean up on return/unwind. Retained
+            // workspaces keep their files if execution or finalization fails.
             let outcome = {
                 let mut context = RunContext::new(path, experiment.artifacts, store);
                 context.reference_scope = Some(format!("experiment:{experiment_id}"));
@@ -152,15 +157,68 @@ where
     Ok(experiment_id)
 }
 
-fn workspace(experiment: ExperimentId, retain: bool) -> Result<TempDir> {
+enum Workspace {
+    Temporary(TempDir),
+    Retained(PathBuf),
+}
+
+impl Workspace {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Temporary(directory) => directory.path(),
+            Self::Retained(path) => path,
+        }
+    }
+}
+
+fn workspace(
+    run_directory: &Path,
+    commit: &Commit,
+    index: usize,
+    definition: &BenchmarkDefinition,
+    retain: bool,
+) -> Result<Workspace> {
     if retain {
-        let root = PathBuf::from("output/artifacts").join(experiment.to_string());
-        fs::create_dir_all(&root)?;
-        Ok(tempfile::Builder::new()
-            .prefix("attempt-")
-            .tempdir_in(root)?)
+        // Collection position distinguishes duplicate workloads; the full commit
+        // distinguishes measurements of the same workload across the history.
+        let kind: String = definition
+            .kind
+            .chars()
+            .map(|value| {
+                if value.is_ascii_alphanumeric() || matches!(value, '-' | '_') {
+                    value
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let commit: String = commit
+            .id
+            .0
+            .chars()
+            .map(|value| {
+                if value.is_ascii_alphanumeric() {
+                    value
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let root = run_directory
+            .join(format!("{index:04}-{kind}-{commit}"))
+            .join("build_artifacts");
+        fs::create_dir_all(
+            root.parent()
+                .expect("artifact directory has a benchmark parent"),
+        )?;
+        fs::create_dir(&root)?;
+        Ok(Workspace::Retained(root))
     } else {
-        Ok(tempfile::tempdir()?)
+        Ok(Workspace::Temporary(
+            tempfile::Builder::new()
+                .prefix(".work-")
+                .tempdir_in(run_directory)?,
+        ))
     }
 }
 

@@ -38,6 +38,8 @@ pub enum Error {
     InvalidView(String),
     #[error("benchmark error: {0}")]
     Benchmark(String),
+    #[error("invalid output configuration: {0}")]
+    Output(String),
     #[error("{command} failed ({status}): {detail}")]
     Process {
         command: String,

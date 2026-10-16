@@ -3,19 +3,21 @@ use std::{io, path::PathBuf, process::ExitCode};
 use benchmarks::{
     Error, Result,
     benchmarks::mcm::{self, McmMetric, McmOutput, McmSelection, McmView},
+    output::OutputLayout,
     store::{HistoryQuery, SqliteStore, Store},
     view::{View, ViewData},
 };
 
 const HELP: &str =
-    "Usage: view_results [--database PATH] [--experiment ID] [--metric runtime|area|all] [--details] [--json]
+    "Usage: view_results [--output-dir PATH] [--name NAME] [--database PATH] [--experiment ID] [--metric runtime|area|all] [--details] [--json]
 
-Defaults: output/mcm.sqlite, latest registered experiment, both metrics, text output.
+Defaults: output/mcm/database.sqlite, latest registered experiment, both metrics, text output.
 Workload indices refer to positions in the frozen benchmark collection.
 Runtime ratios below 1 and area savings above 0 favor Yosys MCM.";
 
 struct Options {
-    database: PathBuf,
+    output: OutputLayout,
+    database: Option<PathBuf>,
     experiment: Option<i64>,
     metrics: Vec<McmMetric>,
     json: bool,
@@ -25,7 +27,11 @@ struct Options {
 impl Options {
     fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Self>> {
         let mut options = Self {
-            database: "output/mcm.sqlite".into(),
+            output: OutputLayout {
+                output_dir: "output".into(),
+                experiment: "mcm".into(),
+            },
+            database: None,
             experiment: None,
             metrics: vec![McmMetric::RuntimeRatio, McmMetric::AreaSavings],
             json: false,
@@ -39,7 +45,9 @@ impl Options {
                 }
                 "--json" => options.json = true,
                 "--details" => options.details = true,
-                "--database" => options.database = argument(&mut args, &arg)?.into(),
+                "--database" => options.database = Some(argument(&mut args, &arg)?.into()),
+                "--output-dir" => options.output.output_dir = argument(&mut args, &arg)?.into(),
+                "--name" => options.output.experiment = argument(&mut args, &arg)?,
                 "--experiment" => {
                     let id = argument(&mut args, &arg)?.parse::<i64>().map_err(|_| {
                         invalid_argument("experiment ID must be a positive integer")
@@ -85,13 +93,17 @@ fn run() -> Result<()> {
     let Some(options) = Options::parse(std::env::args().skip(1))? else {
         return Ok(());
     };
-    if !options.database.is_file() {
+    let database = match options.database {
+        Some(path) => path,
+        None => options.output.database_path()?,
+    };
+    if !database.is_file() {
         return Err(Error::Storage(format!(
             "database {} does not exist; run an experiment first",
-            options.database.display()
+            database.display()
         )));
     }
-    let store = SqliteStore::open(&options.database)?;
+    let store = SqliteStore::open(database)?;
     let experiment = match options.experiment {
         Some(id) => id,
         None => store.latest_experiment()?.ok_or_else(|| {

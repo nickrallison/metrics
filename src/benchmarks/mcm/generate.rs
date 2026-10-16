@@ -149,7 +149,12 @@ mod tests {
         let expected: Vec<Vec<i64>> =
             serde_json::from_str(include_str!("../../../tests/fixtures/mcm_seed42.json")).unwrap();
         assert_eq!(
-            CoefficientGenerator::default().generate().unwrap(),
+            CoefficientGenerator {
+                count: expected.len(),
+                ..Default::default()
+            }
+            .generate()
+            .unwrap(),
             expected
         );
     }

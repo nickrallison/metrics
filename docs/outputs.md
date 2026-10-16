@@ -14,6 +14,7 @@ individual registered invocation inside that database.
 ```text
 output/
   builds/yosys/                       Shared Yosys installation cache and build logs
+  builds/ccache/                      Shared compiler output across Yosys revisions
   mcm/
     database.sqlite                   SQLite results for this named experiment
     2026-10-16T18:42:07.123456789Z/     One invocation, in UTC
@@ -59,6 +60,8 @@ invocations and do not add timing observations.
 use its database path; callers of the generic runner still provide their own
 `Store`. The shared Yosys cache is configured separately by the builder and the
 example puts it at `<output_dir>/builds/yosys` to reuse installations across runs.
+Its sibling `<output_dir>/builds/ccache` reuses compiler output across commits;
+see [Yosys builds](builds.md).
 
 Earlier databases and artifact directories are preserved. Use
 `view_results --database output/mcm.sqlite` to read the previous database layout.

@@ -14,7 +14,8 @@ use crate::{
     history::{Commit, CommitId},
 };
 
-// Bump when changing the build procedure. An old cache must be kept separate.
+// Bump when changing compilation options or installed contents. Compiler caching
+// and job limits do not invalidate already completed installations.
 const RECIPE_VERSION: u32 = 1;
 
 #[derive(Debug, Clone)]
@@ -29,6 +30,7 @@ pub struct Yosys {
 /// Uses CMake Release when available, otherwise the historical Make build. CMake
 /// uses bundled dependencies with unit tests disabled; both builds include ABC.
 /// Compilation uses the available CPU count; `jobs` can lower that limit.
+/// Fresh builds require ccache and share compiler output across commits.
 /// Git may fetch missing submodules.
 ///
 /// One cache directory belongs to one canonical repository path and build recipe.
@@ -104,6 +106,7 @@ impl Builder for YosysBuilder {
                 "Cached installation failed validation; rebuilding."
             )?;
         }
+        log.run("ccache", Command::new("ccache").arg("--version"))?;
         if prefix.exists() {
             fs::remove_dir_all(&prefix)?;
         }
@@ -113,6 +116,18 @@ impl Builder for YosysBuilder {
             .tempdir_in(&cache)?;
         let source = workspace.path().join("source");
         let build = workspace.path().join("build");
+        let compiler_cache = cache.parent().unwrap_or(&cache).join("ccache");
+        let compiler_tmp = workspace.path().join("ccache-tmp");
+        fs::create_dir_all(&compiler_cache)?;
+        fs::create_dir(&compiler_tmp)?;
+        // Normalize paths relative to each workspace, not the shared cache root:
+        // the random .build-* component must not become part of compiler keys.
+        let compiler_environment = [
+            ("CCACHE_DIR", compiler_cache.as_os_str()),
+            ("CCACHE_BASEDIR", workspace.path().as_os_str()),
+            ("CCACHE_TEMPDIR", compiler_tmp.as_os_str()),
+        ];
+        writeln!(log.file, "Compiler cache: {}", compiler_cache.display())?;
         let available = std::thread::available_parallelism()?;
         let jobs = self.jobs.unwrap_or(available).min(available).to_string();
         eprintln!(
@@ -156,23 +171,27 @@ impl Builder for YosysBuilder {
                     .arg("-DCMAKE_INSTALL_BINDIR=bin")
                     .arg("-DCMAKE_INSTALL_DATADIR=share")
                     .arg("-DYOSYS_USE_BUNDLED_LIBS=ON")
-                    .arg("-DYOSYS_ENABLE_UNIT_TESTS=OFF"),
+                    .arg("-DYOSYS_ENABLE_UNIT_TESTS=OFF")
+                    .arg("-DYOSYS_COMPILER_LAUNCHER=ccache")
+                    .arg("-DCMAKE_C_COMPILER_LAUNCHER=ccache")
+                    .arg("-DCMAKE_CXX_COMPILER_LAUNCHER=ccache")
+                    .envs(compiler_environment),
             )?;
             log.run(
                 "compile",
-                Command::new("cmake").arg("--build").arg(&build).args([
-                    "--config",
-                    "Release",
-                    "--parallel",
-                    &jobs,
-                ]),
+                Command::new("cmake")
+                    .arg("--build")
+                    .arg(&build)
+                    .args(["--config", "Release", "--parallel", &jobs])
+                    .envs(compiler_environment),
             )?;
             log.run(
                 "install",
                 Command::new("cmake")
                     .arg("--install")
                     .arg(&build)
-                    .args(["--config", "Release"]),
+                    .args(["--config", "Release"])
+                    .envs(compiler_environment),
             )?;
         } else if source.join("Makefile").is_file() {
             // Command-line PREFIX takes precedence over historical defaults.
@@ -181,17 +200,25 @@ impl Builder for YosysBuilder {
                 "compile",
                 Command::new("make")
                     .current_dir(&source)
-                    .args(["-j", &jobs, &prefix_arg]),
+                    .args(["-j", &jobs, &prefix_arg, "ENABLE_CCACHE=1"])
+                    .envs(compiler_environment),
             )?;
             log.run(
                 "install",
                 Command::new("make")
                     .current_dir(&source)
-                    .args(["install", &prefix_arg]),
+                    .args(["install", &prefix_arg, "ENABLE_CCACHE=1"])
+                    .envs(compiler_environment),
             )?;
         } else {
             return Err(log.error("configure", "neither CMakeLists.txt nor Makefile exists"));
         }
+        log.run(
+            "ccache statistics",
+            Command::new("ccache")
+                .arg("--show-stats")
+                .envs(compiler_environment),
+        )?;
         validate(&tool, &mut log)?;
         // Publish readiness last. A failure or interruption is never a cache hit.
         let mut ready = tempfile::NamedTempFile::new_in(&prefix)?;

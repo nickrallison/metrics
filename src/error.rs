@@ -34,4 +34,6 @@ pub enum Error {
     Sqlite(#[from] rusqlite::Error),
     #[error("invalid storage state: {0}")]
     Storage(String),
+    #[error("invalid view data: {0}")]
+    InvalidView(String),
 }

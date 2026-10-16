@@ -29,7 +29,7 @@ mod sqlite;
 pub use reference::{Reference, ReferenceCache, ReferenceId};
 pub use sqlite::SqliteStore;
 
-use std::{path::PathBuf, time::SystemTime};
+use std::{collections::BTreeMap, path::PathBuf, time::SystemTime};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -103,6 +103,10 @@ pub struct HistoryEntry<O> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct History<O> {
+    /// Frozen revision order, including commits without finished measurements.
+    pub commits: Vec<Commit>,
+    /// Matching frozen workloads, keyed by their original collection positions.
+    pub benchmarks: BTreeMap<usize, BenchmarkDefinition>,
     pub records: Vec<HistoryEntry<O>>,
 }
 

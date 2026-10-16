@@ -24,6 +24,13 @@ pub struct SqliteStore {
 }
 
 impl SqliteStore {
+    /// Most recently registered experiment, or `None` for an empty database.
+    pub fn latest_experiment(&self) -> Result<Option<ExperimentId>> {
+        Ok(self
+            .connection
+            .query_row("SELECT MAX(id) FROM experiments", [], |row| row.get(0))?)
+    }
+
     /// `:memory:` opens a temporary database. Unsupported schema versions fail.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
@@ -319,11 +326,10 @@ impl Store for SqliteStore {
     }
 
     fn history<O: DeserializeOwned>(&self, query: &HistoryQuery) -> Result<History<O>> {
-        ensure_experiment(&self.connection, query.experiment)?;
-        let valid_schema: bool = self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM benchmarks WHERE experiment_id = ?1 AND kind = ?2 AND version = ?3)",
-            params![query.experiment, query.benchmark_kind, query.benchmark_version], |row| row.get(0),
-        )?;
+        let definition = self.experiment(query.experiment)?;
+        let valid_schema = definition.benchmarks.iter().any(|benchmark| {
+            benchmark.kind == query.benchmark_kind && benchmark.version == query.benchmark_version
+        });
         if !valid_schema {
             return Err(Error::Storage(
                 "benchmark kind/version is not registered in this experiment".into(),
@@ -377,7 +383,24 @@ impl Store for SqliteStore {
             };
             records.push(HistoryEntry { id: row.id, record });
         }
-        Ok(History { records })
+        let benchmarks = definition
+            .benchmarks
+            .into_iter()
+            .enumerate()
+            .filter(|(_, benchmark)| {
+                benchmark.kind == query.benchmark_kind
+                    && benchmark.version == query.benchmark_version
+                    && query
+                        .benchmark_parameters
+                        .as_ref()
+                        .is_none_or(|filter| *filter == benchmark.parameters)
+            })
+            .collect();
+        Ok(History {
+            commits: definition.commits,
+            benchmarks,
+            records,
+        })
     }
 
     fn last_complete(&self, experiment: ExperimentId) -> Result<Option<CommitId>> {

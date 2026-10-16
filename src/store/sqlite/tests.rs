@@ -118,6 +118,11 @@ fn records_pending_attempts_and_references_survive_reopening() {
     let history = store.history::<Metrics>(&query(experiment)).unwrap();
     assert_eq!(history.records.len(), 1);
     assert_eq!(history.records[0].id, first);
+    assert_eq!(history.commits, definition.commits);
+    assert_eq!(
+        history.benchmarks.keys().copied().collect::<Vec<_>>(),
+        [0, 1]
+    );
     match &history.records[0].record.outcome {
         Outcome::Succeeded(value) => assert_eq!(*value, metrics(7)),
         outcome => panic!("unexpected outcome: {outcome:?}"),
@@ -194,18 +199,15 @@ fn history_uses_frozen_order_and_latest_finished_measurement() {
     );
     let mut filtered = query(experiment);
     filtered.benchmark_parameters = Some(json!({"coefficient": 5}));
-    assert_eq!(
-        store.history::<Metrics>(&filtered).unwrap().records.len(),
-        2
-    );
+    let selected = store.history::<Metrics>(&filtered).unwrap();
+    assert_eq!(selected.records.len(), 2);
+    assert_eq!(selected.commits, definition.commits);
+    assert_eq!(selected.benchmarks.keys().copied().collect::<Vec<_>>(), [1]);
     filtered.benchmark_parameters = Some(json!({"coefficient": 99}));
-    assert!(
-        store
-            .history::<Metrics>(&filtered)
-            .unwrap()
-            .records
-            .is_empty()
-    );
+    let selected = store.history::<Metrics>(&filtered).unwrap();
+    assert!(selected.records.is_empty());
+    assert!(selected.benchmarks.is_empty());
+    assert_eq!(selected.commits, definition.commits);
 }
 
 #[test]

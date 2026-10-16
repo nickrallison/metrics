@@ -74,10 +74,12 @@ fn main() -> Result<()> {
             repository: "../yosys".into(),
             branch: "main".into(),
         },
-        // Replace this anchor with a commit on the selected Yosys branch.
-        revisions: RevisionSelection::Since(CommitId(
-            "8802950c22d4dd32abd482f409c83396d04bd496".into(),
-        )),
+        // Two adjacent mainline commits, oldest first, to check compiler reuse.
+        // Use a fresh --output-dir to exercise both builds instead of installed hits.
+        revisions: RevisionSelection::Explicit(vec![
+            CommitId("8802950c22d4dd32abd482f409c83396d04bd496".into()),
+            CommitId("a31d95ea005b35bb894876e27627030bf8ef2c8a".into()),
+        ]),
         suite: McmSuite {
             coefficient_sets: CoefficientSets::Generated(CoefficientGenerator::default()),
             input_width: 32,

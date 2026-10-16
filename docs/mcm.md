@@ -16,6 +16,19 @@ the runner does not download them. A Yosys revision without `mcm` produces an
 unsupported outcome. Each invocation creates a new experiment and preserves old
 attempts, including failed scaffold runs.
 
+The current selection is two adjacent mainline revisions, `8802950c22d4` then
+`a31d95ea005b`, to check compiler cache reuse. To compile both instead of reusing
+existing installations, choose a fresh output root:
+
+```sh
+cargo run --bin run_mcm -- --output-dir output-ccache-check
+```
+
+Both builds share `output-ccache-check/builds/ccache`. Each build log under
+`output-ccache-check/builds/yosys/logs` ends compilation with cumulative ccache
+statistics. The second build should add cache hits; dependencies that changed
+still compile. Repeating the command reuses the completed installations.
+
 Yosys compilation uses the available CPU count by default. `--jobs N` sets a
 positive compiler job limit, capped at the available CPU count; see
 [Yosys builds](builds.md).

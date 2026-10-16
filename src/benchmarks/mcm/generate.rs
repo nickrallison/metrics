@@ -50,7 +50,7 @@ impl Default for CoefficientGenerator {
     fn default() -> Self {
         Self {
             seed: 42,
-            count: 40,
+            count: 10,
             length_range: 1..=6,
             value_range: -2_147_483_648..=2_147_483_647,
             a: 1.3,

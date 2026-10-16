@@ -19,6 +19,15 @@ pub enum Error {
     InvalidRevision(String),
     #[error("invalid Git output: {0}")]
     InvalidGitOutput(String),
+    #[error("invalid Yosys build cache: {0}")]
+    BuildCache(String),
+    #[error("Yosys build for {commit} failed during {stage}: {detail}; log: {log:?}")]
+    YosysBuild {
+        commit: String,
+        stage: &'static str,
+        detail: String,
+        log: std::path::PathBuf,
+    },
     #[error("{0}")]
     Serialization(#[from] serde_json::Error),
     #[error("{0}")]

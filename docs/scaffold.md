@@ -42,28 +42,30 @@ cargo run --bin run_mcm
 cargo run --bin view_results
 ```
 
-The examples open/create their SQLite database. They still cannot build tools or
-launch benchmarks: `run_mcm` reaches the Yosys builder stub after registration,
-provided its repository and selection are valid. `view_results` can load an
+The examples open/create their SQLite database. `run_mcm` builds and caches each
+selected Yosys commit before reaching the unfinished MCM comparison, which is
+recorded as a failed benchmark outcome. `view_results` can load an
 existing experiment, then reaches the MCM view stub. An unknown experiment is a
 storage error rather than an empty fabricated result.
 `run_mcm` configures hard-coded coefficient sets; orchestration freezes them once
 before resolving revisions.
-Edit its repository, branch, commit anchor, library, and paper-tool paths when
-the execution phases are implemented. `view_results` shows the typed query and
-view pipeline; rendering is not implemented.
+Edit its repository, branch, commit anchor, library, and paper-tool paths for your
+environment. `view_results` shows the typed query and view pipeline; rendering is
+not implemented.
 
 Working pieces are the types, serialization, suite expansion, tool binding,
-reference storage, typed SQLite history, Git revision resolution, and sequential
-orchestration. The orchestration loop
-registers frozen definitions and revision order, starts/finalizes attempts, records
+reference storage, typed SQLite history, Git revision resolution, cached Yosys
+builds, and sequential orchestration. The orchestration loop registers frozen
+definitions and revision order, starts/finalizes attempts, records
 benchmark failures, and completes only processed commits. Tests cover fake tool
 dependencies with real SQLite, database reopen/interruption behavior, and Git
-resolution against temporary repositories. Builds, timed execution,
+resolution against temporary repositories. Timed execution,
 benchmark-output parsing, history projection, and graphical rendering remain stubs.
 
 See [SQLite storage](storage.md) for schema layout, lifecycle rules, reference
 caching, history selection, and the fallible `SqliteStore::open` constructor.
+See [Yosys builds](builds.md) for prerequisites, cache layout, logs, and the
+optional real-build check.
 
 Revision resolution uses the installed Git CLI without fetching, checking out, or
 modifying the worktree. It accepts local branch names and full `refs/heads/` or
@@ -123,9 +125,8 @@ porting notes distinguish historical behavior from the intended Rust contracts.
    measurement environment, and refresh behavior; immutable IDs are implemented.
 3. Implement the typed MCM view for one commit. SQLite registration, attempt
    start/finish, build failures, completion, and typed history are implemented.
-4. Implement cached Yosys builds, then exercise the existing sequential history
-   loop with real Git, build, and storage dependencies. Revision resolution is
-   already implemented.
+4. Exercise the sequential history loop with real MCM comparisons. Revision
+   resolution, cached Yosys builds, and SQLite storage are implemented.
 5. Add verified resume, explicit reruns, input digest checks, and artifact
    inspection. These must not silently change workloads or replace measurements.
 6. Add a graphical renderer, a synthesis view, and a design-manifest adapter.
@@ -173,4 +174,4 @@ configurable build-profile hierarchy, or universal metric database.
   Generated workloads must preserve actual values in addition to seeds.
 
 These are documentation and implementation choices, not additional working
-features. The examples continue to stop at explicit stub errors.
+features. Unfinished operations continue to return explicit stub errors.

@@ -17,6 +17,7 @@
 //! comparison unless partial-result fields are explicitly introduced later.
 
 mod generate;
+mod html;
 mod output;
 mod parse;
 mod report;

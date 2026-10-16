@@ -11,6 +11,16 @@
   `stackcollapse-perf.pl` and `flamegraph.pl` on PATH.
   See [profiling setup and usage](docs/profiling.md).
 
+# Results graph
+
+```sh
+cargo run --bin view_results -- --html output/mcm/results.html
+```
+
+Open `output/mcm/results.html` in a browser. The offline graph supports metric
+and coefficient selection, comparisons, mouse zoom/pan, and SVG export.
+Regenerate it to include new results. See [usage](docs/mcm.md).
+
 # Further Brain Thoughts
 
 - Collapse Criteria

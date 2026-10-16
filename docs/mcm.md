@@ -6,6 +6,7 @@ cargo run --bin run_mcm -- --jobs 8
 cargo run --bin run_mcm -- --perf --workload 0
 cargo run --bin view_results
 cargo run --bin view_results -- --experiment 7 --metric area --json
+cargo run --bin view_results -- --html output/mcm/results.html
 cargo run --bin run_mcm -- --output-dir output --name manual-mcm --keep-artifacts
 cargo run --bin view_results -- --output-dir output --name manual-mcm --details
 ```
@@ -135,6 +136,22 @@ failed, unsupported, empty, or invalid measurements are explicit exclusions.
 Commits without finished attempts still get missing points, in frozen order.
 Older data at `output/mcm.sqlite` remains accessible with
 `cargo run --bin view_results -- --database output/mcm.sqlite`.
+
+`--html PATH.html` writes a single offline graph snapshot. Open it in a browser;
+no server or additional dependencies are required. Choose runtime ratio or area
+savings, aggregate all inputs, select one coefficient set, or compare individual
+sets. Scroll to zoom, drag to pan, use box zoom or Reset, and click points for
+commit metadata, coverage, and exclusion reasons. Gray missing-data markers are
+separate from the metric axis. The commit picker also exposes missing results.
+Input parameters are available below the graph. Export SVG saves the visible
+graph. Input changes retain the commit viewport; metric changes reset the
+vertical scale. `--metric` can restrict which metrics the snapshot contains.
+HTML output is separate from `--json`, `--details`, and `--attempts`.
+
+The graph uses the same projections and latest finished results as the text
+viewer. It includes one experiment, chosen with `--experiment` or the latest ID
+by default. Regenerate and reload the file to include new measurements. See the
+[UI design](ui-plan.md) for aggregation and interaction details.
 
 Runtime ratio averages repetitions per workload, then divides mean Yosys runtime
 by mean paper runtime on the same matched workload set. It does not average

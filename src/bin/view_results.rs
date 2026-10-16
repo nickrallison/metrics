@@ -9,11 +9,13 @@ use benchmarks::{
 };
 
 const HELP: &str =
-    "Usage: view_results [--output-dir PATH] [--name NAME] [--database PATH] [--experiment ID] [--metric runtime|area|all] [--details | --attempts] [--json]
+    "Usage: view_results [--output-dir PATH] [--name NAME] [--database PATH] [--experiment ID] [--metric runtime|area|all] [--details | --attempts] [--json | --html PATH]
 
 Defaults: output/mcm/database.sqlite, latest registered experiment, both metrics, text output.
 Workload indices refer to positions in the frozen benchmark collection.
-Runtime ratios below 1 and area savings above 0 favor Yosys MCM.";
+Runtime ratios below 1 and area savings above 0 favor Yosys MCM.
+--html exports a portable offline graph; open the file in a browser.
+Regenerate and reload the HTML to see newly recorded measurements.";
 
 struct Options {
     output: OutputLayout,
@@ -23,6 +25,7 @@ struct Options {
     json: bool,
     details: bool,
     attempts: bool,
+    html: Option<PathBuf>,
 }
 
 impl Options {
@@ -38,6 +41,7 @@ impl Options {
             json: false,
             details: false,
             attempts: false,
+            html: None,
         };
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -49,6 +53,7 @@ impl Options {
                 "--details" => options.details = true,
                 "--attempts" => options.attempts = true,
                 "--database" => options.database = Some(argument(&mut args, &arg)?.into()),
+                "--html" => options.html = Some(argument(&mut args, &arg)?.into()),
                 "--output-dir" => options.output.output_dir = argument(&mut args, &arg)?.into(),
                 "--name" => options.output.experiment = argument(&mut args, &arg)?,
                 "--experiment" => {
@@ -82,6 +87,11 @@ impl Options {
         if options.details && options.attempts {
             return Err(invalid_argument("use either --details or --attempts"));
         }
+        if options.html.is_some() && (options.json || options.details || options.attempts) {
+            return Err(invalid_argument(
+                "--html cannot be combined with --json, --details, or --attempts",
+            ));
+        }
         Ok(Some(options))
     }
 }
@@ -108,6 +118,18 @@ fn run() -> Result<()> {
             "database {} does not exist; run an experiment first",
             database.display()
         )));
+    }
+    if let Some(path) = &options.html {
+        if path.extension().is_none_or(|ext| ext != "html") {
+            return Err(invalid_argument(
+                "--html output must have an .html extension",
+            ));
+        }
+        if path.exists() && path.canonicalize()? == database.canonicalize()? {
+            return Err(invalid_argument(
+                "HTML output cannot overwrite the database",
+            ));
+        }
     }
     let store = SqliteStore::open(database)?;
     let experiment = match options.experiment {
@@ -180,6 +202,23 @@ fn run() -> Result<()> {
         return Ok(());
     }
     let history = store.history::<McmOutput>(&query)?;
+    if let Some(path) = options.html {
+        let html = McmView
+            .snapshot(experiment, &history, &options.metrics)?
+            .render()?;
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, html)?;
+        println!(
+            "Experiment {experiment}: graph written to {}",
+            path.display()
+        );
+        return Ok(());
+    }
     if options.details {
         let report = McmView.report(&history)?;
         if options.json {

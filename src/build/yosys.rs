@@ -14,8 +14,9 @@ use crate::{
     history::{Commit, CommitId},
 };
 
-// Bump when changing compilation options or installed contents. Compiler caching
-// and job limits do not invalidate already completed installations.
+// Bump when changing runtime compilation options or required installed contents.
+// Debug path normalization, compiler caching, and job limits do not invalidate
+// already completed installations.
 const RECIPE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone)]
@@ -120,12 +121,26 @@ impl Builder for YosysBuilder {
         let compiler_tmp = workspace.path().join("ccache-tmp");
         fs::create_dir_all(&compiler_cache)?;
         fs::create_dir(&compiler_tmp)?;
+        // -g otherwise makes ccache hash the random compilation directory.
+        // Quote the whole flag for CMake/Make's shell-parsed flag variables.
+        let prefix_map = format!(
+            "'-fdebug-prefix-map={}=/yosys-build'",
+            workspace
+                .path()
+                .display()
+                .to_string()
+                .replace('\'', "'\\''")
+        );
+        let cflags = compiler_flags("CFLAGS", &prefix_map);
+        let cxxflags = compiler_flags("CXXFLAGS", &prefix_map);
         // Normalize paths relative to each workspace, not the shared cache root:
         // the random .build-* component must not become part of compiler keys.
         let compiler_environment = [
             ("CCACHE_DIR", compiler_cache.as_os_str()),
             ("CCACHE_BASEDIR", workspace.path().as_os_str()),
             ("CCACHE_TEMPDIR", compiler_tmp.as_os_str()),
+            ("CFLAGS", cflags.as_os_str()),
+            ("CXXFLAGS", cxxflags.as_os_str()),
         ];
         log.run(
             "ccache configuration",
@@ -232,6 +247,13 @@ impl Builder for YosysBuilder {
         ready.persist(&marker).map_err(|error| error.error)?;
         Ok(tool)
     }
+}
+
+fn compiler_flags(variable: &str, prefix_map: &str) -> std::ffi::OsString {
+    let mut flags = std::env::var_os(variable).unwrap_or_default();
+    flags.push(" ");
+    flags.push(prefix_map);
+    flags
 }
 
 fn check_cache_identity(cache: &Path, repository: PathBuf) -> Result<()> {

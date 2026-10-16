@@ -50,6 +50,14 @@ temporary workspace, normalizing compiler paths across fresh checkouts. Ccache
 temporary files stay inside the workspace. These settings affect child processes
 only; the user's global ccache configuration is not changed.
 
+For debug builds, the builder also appends
+`-fdebug-prefix-map=<temporary-workspace>=/yosys-build` to `CFLAGS` and `CXXFLAGS`,
+preserving inherited flags. CMake and historical Make builds receive this mapping.
+Debug paths then use a common prefix instead of a random `.build-*` directory,
+allowing unchanged objects to hit ccache while retaining source filenames and line
+numbers for perf. Source/header checks remain enabled. The mapped source path is
+virtual; temporary sources are still removed after installation.
+
 The builder sets the project cache limit to 20 GiB before compilation using
 `ccache --max-size`. This limit is defined in `src/build/yosys.rs` and applies to
 fresh output directories too. Ccache saves it in the cache's local configuration,
@@ -65,8 +73,10 @@ appended to each successful compilation's build log. Inspect them directly with:
 CCACHE_DIR="$PWD/output/builds/ccache" ccache --show-stats
 ```
 
-Compiler caching and job limits do not invalidate existing installations. The
-compiler cache starts warming when a previously unbuilt commit is compiled.
+Compiler caching, debug path normalization, and job limits do not invalidate
+existing installations. The first compilation with normalized debug paths warms
+new cache entries; subsequent builds can reuse them. Existing objects compiled
+without normalization generally cannot supply those hits.
 
 Source and compiler output directories are temporary and cleaned on return.
 Build logs are retained independently of benchmark artifact settings. A failed or
@@ -82,8 +92,8 @@ cache must select a new directory when switching recipes.
 
 A cache belongs to one canonical repository path and build recipe. Reusing it for
 a different repository or recipe returns an error; select a different cache
-directory. Changes to compilation options or installed contents must increment
-`RECIPE_VERSION`. Compiler, operating-system, and external library changes are
+directory. Changes to runtime compilation options or required installed contents
+must increment `RECIPE_VERSION`. Compiler, operating-system, and external library changes are
 not fingerprinted yet: use a new cache directory after changing the toolchain or
 build environment. Builders sharing a cache wait for its file lock before
 validating or modifying installations. The lock is released when the builder

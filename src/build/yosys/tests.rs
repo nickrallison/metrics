@@ -159,6 +159,85 @@ fn incomplete_or_damaged_installations_are_rebuilt() {
 }
 
 #[test]
+fn debug_builds_reuse_objects_across_workspaces_and_recompile_changed_headers() {
+    let mut fixture = Fixture::new();
+    fixture.cmake("unused");
+    fixture.write(
+        "CMakeLists.txt",
+        r#"
+cmake_minimum_required(VERSION 3.16)
+project(test_yosys C CXX)
+add_executable(yosys main.cpp common.c)
+install(TARGETS yosys DESTINATION bin)
+install(PROGRAMS yosys-abc DESTINATION bin)
+install(FILES simlib.v simcells.v DESTINATION share/yosys)
+"#,
+    );
+    fixture.write("main.cpp", "#include <cstdio>\n#include \"value.h\"\nextern \"C\" int value();\nint main() { std::printf(\"%d\\n\", value() + VALUE); }\n");
+    fixture.write(
+        "common.c",
+        "#include \"value.h\"\nint value(void) { return VALUE; }\n",
+    );
+    fixture.write("value.h", "#define VALUE 7\n");
+    let first = fixture.commit();
+    fixture.write("unrelated", "Only this file changed\n");
+    let second = fixture.commit();
+    fixture.write("value.h", "#define VALUE 9\n");
+    let third = fixture.commit();
+    let compiler_cache = fixture.root.path().join("ccache");
+    let stats = || {
+        let output = Command::new("ccache")
+            .arg("--print-stats")
+            .env("CCACHE_DIR", &compiler_cache)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let values: std::collections::HashMap<_, _> = std::str::from_utf8(&output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| {
+                let (key, value) = line.split_once('\t').unwrap();
+                (key.to_owned(), value.parse::<u64>().unwrap())
+            })
+            .collect();
+        (
+            values["direct_cache_hit"] + values["preprocessed_cache_hit"],
+            values["cache_miss"],
+        )
+    };
+    let tool = fixture.builder.build(&first).unwrap();
+    assert_eq!(execute(&tool).stdout, b"14\n");
+    let initial = stats();
+    let tool = fixture.builder.build(&second).unwrap();
+    assert_eq!(execute(&tool).stdout, b"14\n");
+    let reused = stats();
+    assert_eq!(reused.0 - initial.0, 2, "both C and C++ objects should hit");
+    assert_eq!(
+        reused.1, initial.1,
+        "a new checkout should not cause misses"
+    );
+    let bytes = fs::read(&tool.executable).unwrap();
+    assert!(
+        bytes
+            .windows(b"/yosys-build".len())
+            .any(|window| window == b"/yosys-build")
+    );
+    assert!(
+        !bytes
+            .windows(b"/.build-".len())
+            .any(|window| window == b"/.build-")
+    );
+    let tool = fixture.builder.build(&third).unwrap();
+    assert_eq!(execute(&tool).stdout, b"18\n");
+    let changed = stats();
+    assert_eq!(
+        changed.1 - reused.1,
+        2,
+        "header changes must invalidate both objects"
+    );
+}
+
+#[test]
 fn concurrent_builders_share_one_completed_installation() {
     let fixture = Fixture::new();
     fixture.cmake("working");

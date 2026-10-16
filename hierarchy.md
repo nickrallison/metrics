@@ -302,7 +302,10 @@ Sources: [design.rs](src/design.rs), [benchmarks/synth.rs](src/benchmarks/synth.
 | `Result<T>`             | Alias for `std::result::Result<T, Error>`.                                                                                                 |
 | `CacheIdentity`         | Private Yosys cache ownership/recipe metadata.                                                                                             |
 | `BuildLog`              | Private persistent build-command log and failure context.                                                                                  |
-| `RawRun`                | Private SQLite row-decoding intermediate.                                                                                                  |
+| `RunRow`                | Private Diesel query result converted to an existing attempt/result type.                                                                  |
+| `BenchmarkRow`          | Private Diesel query result converted to a frozen benchmark definition.                                                                    |
+| `Definitions<'a>`       | Registered workloads and a commit lookup used when decoding a read snapshot.                                                                |
+| `RunSelection`          | Private query policy: latest finished, all finished, unfinished, or latest started attempts.                                                |
 | `PaperKey`              | Private MCM reference key containing tool digest, workload/settings, and measurement scope.                                                |
 | `PythonRandom`          | Private adapter over MT19937 preserving Python-compatible seed encoding and random draw order.                                             |
 | `Options`               | Private `view_results` CLI configuration: database, experiment, metrics, detail mode, and JSON/text output.                                |

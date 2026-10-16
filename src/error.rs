@@ -31,7 +31,9 @@ pub enum Error {
     #[error("{0}")]
     Serialization(#[from] serde_json::Error),
     #[error("{0}")]
-    Sqlite(#[from] rusqlite::Error),
+    Sqlite(#[from] diesel::result::Error),
+    #[error("{0}")]
+    DatabaseConnection(#[from] diesel::ConnectionError),
     #[error("invalid storage state: {0}")]
     Storage(String),
     #[error("invalid view data: {0}")]

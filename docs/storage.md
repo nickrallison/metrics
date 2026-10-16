@@ -2,13 +2,53 @@
 
 Open a store with `SqliteStore::open(path)?`. It creates missing parent
 directories and initializes schema version 1. `:memory:` creates a temporary
-database. The crate uses rusqlite with bundled SQLite; no system SQLite package
+database. The crate uses Diesel with bundled SQLite; no system SQLite package
 is required. Unsupported schema versions fail without migrating or replacing data.
+
+Existing databases keep schema version 1 and open directly. No export/import or
+Diesel migration setup is required. Public storage methods, IDs, and serialized
+payloads retain their existing formats. `Error::Sqlite` now wraps Diesel query
+errors; connection establishment uses `Error::DatabaseConnection`.
 
 The schema is in [schema.sql](../src/store/sqlite/schema.sql). Foreign keys are
 enabled on each connection. Registration, attempt start, build failure recording,
 and commit completion use transactions. Finalization updates one pending attempt
 atomically. No write transaction remains open during benchmark execution.
+Reads that combine definitions and results use one read transaction. A private
+`RefCell<SqliteConnection>` preserves the public `&self` read methods; helpers
+receive the same borrowed connection rather than borrowing the store again.
+
+The backend is split into:
+
+| File | Responsibility |
+| --- | --- |
+| [sqlite.rs](../src/store/sqlite.rs) | Storage operations, validation, and transaction boundaries |
+| [schema.rs](../src/store/sqlite/schema.rs) | Typed table/column declarations matching schema.sql |
+| [rows.rs](../src/store/sqlite/rows.rs) | Typed query results and conversion to existing domain types |
+| [queries.rs](../src/store/sqlite/queries.rs) | Attempt selection shared by history and completion |
+
+Only initialization and SQLite PRAGMAs use handwritten SQL. Normal reads and
+writes use Diesel's typed query builder. IDs and integer foreign keys map to
+`BigInt`/`i64`; generic JSON payloads remain text decoded by Serde.
+
+## Debugging
+
+Start with the public operation and the corresponding helper above. For an
+unexpected history result, check `RunSelection` in `queries.rs`: `LatestFinished`
+ignores unfinished attempts, while `LatestStarted` includes them for completion.
+For incorrect decoded data, check `rows.rs`. Experiment compatibility and
+finalization checks live in `sqlite.rs`.
+
+To print generated SQL and bound values to stderr:
+
+```sh
+BENCHMARKS_SQL=1 cargo run --bin view_results -- --attempts
+```
+
+This also works with `run_mcm` and leaves normal stdout/JSON output unchanged.
+Leave the variable unset for normal operation. Most database changes only need
+the typed queries; update `schema.sql` and the Rust mappings together when making
+an intentional future schema change.
 
 | Table | Stored data |
 | --- | --- |

@@ -8,7 +8,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tempfile = "3"
-rusqlite = { version = "0.40", features = ["bundled"] }
 sha2 = "0.10.9"
 rand_mt = { version = "6.1.0", default-features = false }
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+diesel = { version = "~2.3.12", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
+# Enable bundled SQLite for Diesel without a system SQLite dependency.
+libsqlite3-sys = { version = "0.38", features = ["bundled"] }

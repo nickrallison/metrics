@@ -7,6 +7,7 @@ use serde::{Deserialize, Serializer};
 use serde_json::json;
 
 use super::*;
+use crate::store::{BenchmarkDefinition, RunRecord};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 struct Metrics {
@@ -211,8 +212,11 @@ fn records_pending_attempts_and_references_survive_reopening() {
         reference
     );
     let reason: String = store
-        .connection
-        .query_row("SELECT reason FROM build_failures", [], |row| row.get(0))
+        .read(|connection| {
+            Ok(build_failures::table
+                .select(build_failures::reason)
+                .first(connection)?)
+        })
         .unwrap();
     assert_eq!(reason, "compiler failed");
     assert!(
@@ -525,8 +529,7 @@ fn registration_rolls_back_invalid_definitions_and_keeps_existing_metadata_immut
     invalid.commits.push(invalid.commits[0].clone());
     assert!(store.register_experiment(&invalid).is_err());
     let count: i64 = store
-        .connection
-        .query_row("SELECT COUNT(*) FROM experiments", [], |row| row.get(0))
+        .read(|connection| Ok(experiments::table.count().get_result(connection)?))
         .unwrap();
     assert_eq!(count, 0);
     let mut definition = definition();
@@ -541,8 +544,7 @@ fn registration_rolls_back_invalid_definitions_and_keeps_existing_metadata_immut
         "wrong metadata"
     );
     let count: i64 = store
-        .connection
-        .query_row("SELECT COUNT(*) FROM experiments", [], |row| row.get(0))
+        .read(|connection| Ok(experiments::table.count().get_result(connection)?))
         .unwrap();
     assert_eq!(count, 1);
 }
@@ -591,12 +593,12 @@ fn reference_refresh_appends_and_failed_serialization_does_not_replace_the_lates
         Err(Error::Serialization(_))
     ));
     let old: String = store
-        .connection
-        .query_row(
-            "SELECT payload FROM reference_results WHERE id = ?1",
-            [first],
-            |row| row.get(0),
-        )
+        .read(|connection| {
+            Ok(reference_results::table
+                .find(first)
+                .select(reference_results::payload)
+                .first(connection)?)
+        })
         .unwrap();
     assert_eq!(serde_json::from_str::<Metrics>(&old).unwrap(), metrics(1));
 }
@@ -642,8 +644,11 @@ fn build_failure_reopens_completion_and_persists_the_reason() {
         .unwrap();
     assert_eq!(store.last_complete(experiment).unwrap(), None);
     let reason: String = store
-        .connection
-        .query_row("SELECT reason FROM build_failures", [], |row| row.get(0))
+        .read(|connection| {
+            Ok(build_failures::table
+                .select(build_failures::reason)
+                .first(connection)?)
+        })
         .unwrap();
     assert_eq!(reason, "build error");
 }
@@ -675,13 +680,104 @@ fn append_uses_the_same_started_attempt_and_preserves_metadata() {
 fn unsupported_schema_versions_fail_without_altering_existing_data() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("future.sqlite");
-    let connection = Connection::open(&path).unwrap();
-    connection.execute_batch("CREATE TABLE sentinel(value TEXT); INSERT INTO sentinel VALUES ('keep'); PRAGMA user_version = 2;").unwrap();
+    let mut connection = SqliteConnection::establish(path.to_str().unwrap()).unwrap();
+    connection.batch_execute("CREATE TABLE sentinel(value TEXT); INSERT INTO sentinel VALUES ('keep'); PRAGMA user_version = 2;").unwrap();
     drop(connection);
     assert!(matches!(SqliteStore::open(&path), Err(Error::Storage(_))));
-    let connection = Connection::open(&path).unwrap();
-    let value: String = connection
-        .query_row("SELECT value FROM sentinel", [], |row| row.get(0))
+    let mut connection = SqliteConnection::establish(path.to_str().unwrap()).unwrap();
+    #[derive(QueryableByName)]
+    struct Sentinel {
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        value: String,
+    }
+    let row = diesel::sql_query("SELECT value FROM sentinel")
+        .get_result::<Sentinel>(&mut connection)
         .unwrap();
-    assert_eq!(value, "keep");
+    assert_eq!(row.value, "keep");
+}
+
+#[test]
+fn ids_and_benchmark_versions_keep_their_full_integer_range() {
+    const LARGE: i64 = i32::MAX as i64 + 100;
+    let mut store = SqliteStore::open(":memory:").unwrap();
+    diesel::insert_into(experiments::table)
+        .values((
+            experiments::id.eq(LARGE),
+            experiments::configuration.eq("{}"),
+        ))
+        .execute(store.connection.get_mut())
+        .unwrap();
+    let mut definition = definition();
+    definition.benchmarks[0].version = u32::MAX;
+    let experiment = store.register_experiment(&definition).unwrap();
+    assert!(experiment > LARGE);
+    let attempt = start(experiment, &definition, 0, 0);
+    diesel::insert_into(runs::table)
+        .values((
+            runs::id.eq(LARGE),
+            runs::experiment_id.eq(experiment),
+            runs::commit_id.eq(&attempt.commit.id.0),
+            runs::benchmark_index.eq(0),
+            runs::started_at.eq(serde_json::to_string(&attempt.started_at).unwrap()),
+        ))
+        .execute(store.connection.get_mut())
+        .unwrap();
+    let id = store.start_run(&attempt).unwrap();
+    assert!(id > LARGE);
+    finish(&mut store, id, 7);
+    let mut inspection = attempt;
+    inspection.purpose = RunPurpose::Inspection { source: id };
+    let inspected = store.start_run(&inspection).unwrap();
+    finish(&mut store, inspected, 99);
+    let mut selected = query(experiment);
+    selected.benchmark_version = u32::MAX;
+    let history = store.history::<Metrics>(&selected).unwrap();
+    assert_eq!(history.records[0].id, id);
+    assert_eq!(history.records[0].record.benchmark.version, u32::MAX);
+
+    diesel::insert_into(reference_results::table)
+        .values((
+            reference_results::id.eq(LARGE),
+            reference_results::cache_key.eq("paper"),
+            reference_results::measured_at.eq(serde_json::to_string(&UNIX_EPOCH).unwrap()),
+            reference_results::payload.eq(serde_json::to_string(&metrics(1)).unwrap()),
+        ))
+        .execute(store.connection.get_mut())
+        .unwrap();
+    let reference = store.insert("paper", &metrics(2)).unwrap();
+    assert!(reference > LARGE);
+    assert_eq!(
+        store.get::<Metrics>("paper").unwrap().unwrap().id,
+        reference
+    );
+}
+
+#[test]
+fn nested_connection_borrows_return_an_error_without_poisoning_the_store() {
+    let store = SqliteStore::open(":memory:").unwrap();
+    let borrowed = store.connection.borrow_mut();
+    assert!(matches!(store.latest_experiment(), Err(Error::Storage(_))));
+    drop(borrowed);
+    assert_eq!(store.latest_experiment().unwrap(), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_database_paths_still_open_and_reopen() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory
+        .path()
+        .join(OsString::from_vec(b"history-\xff.sqlite".to_vec()));
+    let mut store = SqliteStore::open(&path).unwrap();
+    let experiment = store.register_experiment(&definition()).unwrap();
+    drop(store);
+    assert!(path.is_file());
+    assert_eq!(
+        SqliteStore::open(&path)
+            .unwrap()
+            .latest_experiment()
+            .unwrap(),
+        Some(experiment)
+    );
 }

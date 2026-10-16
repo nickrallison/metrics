@@ -46,7 +46,7 @@ Starting another measurement reopens that commit. `last_complete` stops before
 the first incomplete commit, even if later commits retain completion flags.
 Completing the retry restores the prefix without discarding later results.
 A build failure also reopens its commit and preserves the failure reason.
-Automatic resume and successful-build acquisition remain outside this backend.
+Automatic resume and tool building remain outside this backend.
 
 ## History selection
 
@@ -61,6 +61,12 @@ failure that supersedes an earlier success. A newer unfinished retry does not
 hide the last finished result; use `unfinished_runs` and completion status to
 inspect pending work. All attempts remain stored; retries are not extra samples
 in the returned history.
+
+`History` also includes every selected commit in frozen order and matching frozen
+benchmark definitions keyed by original workload position, including when there
+are no finished measurements. Parameter filtering restricts both records and
+benchmark definitions. `latest_experiment()` returns the most recently registered
+experiment, including failed ones, rather than hiding failures behind an older run.
 
 Inspections must link to a finished measurement of the same experiment, commit,
 and workload position. They do not reopen completion and are excluded from
@@ -77,3 +83,8 @@ The cache stores the supplied key and payload. The benchmark remains responsible
 for including tool identity, workload, settings, parser/sampling versions, and a
 compatible measurement environment in its cache identity or payload. The backend
 does not infer these facts or decide when timing measurements should be refreshed.
+
+MCM uses a JSON key containing its procedure version, paper executable SHA-256,
+ordered coefficients, widths, seed, repetitions, OS/architecture, and experiment
+scope. References are reused across commits within an experiment and refreshed
+for each new experiment. Unscoped contexts always collect fresh references.

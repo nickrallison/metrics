@@ -153,6 +153,12 @@ fn cli_projects_sqlite_history_selects_latest_experiment_and_reports_failures() 
     .unwrap();
     assert_eq!(area["series"].as_array().unwrap().len(), 1);
     assert_eq!(area["series"][0]["unit"], "%");
+    let report: Value = serde_json::from_str(&text(&view(&path, &["--experiment", &first_id, "--details", "--json"]))).unwrap();
+    let summary = &report["commits"][0]["summary"];
+    assert_eq!(summary["runtime_ratio"], 1.5);
+    assert_eq!(summary["average_area_savings_percent"], 50.0);
+    assert_eq!(summary["quality"]["same"], 1);
+    assert!(summary["yosys_across_workloads"]["sample_stdev_ms"].is_null());
     let rendered = text(&view(&path, &[]));
     assert!(rendered.contains(&format!("Experiment {latest}")));
     assert!(rendered.contains("n/a"));

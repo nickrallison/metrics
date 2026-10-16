@@ -3,12 +3,15 @@ use std::num::NonZeroU32;
 use benchmarks::{
     Result,
     benchmark::ArtifactPolicy,
-    benchmarks::mcm::{McmOptions, McmSuite, PaperTool},
+    benchmarks::mcm::{
+        self, CoefficientGenerator, CoefficientSets, McmOptions, McmOutput, McmSuite, McmView,
+        PaperTool,
+    },
     build::YosysBuilder,
     design::CellLibrary,
     experiment::{self, Experiment},
     history::{BranchHistory, CommitId, RevisionSelection},
-    store::SqliteStore,
+    store::{HistoryQuery, SqliteStore, Store},
 };
 
 fn main() -> Result<()> {
@@ -22,7 +25,7 @@ fn main() -> Result<()> {
             "8802950c22d4dd32abd482f409c83396d04bd496".into(),
         )),
         suite: McmSuite {
-            coefficient_sets: vec![vec![3, 5, 7], vec![-11, 17, 31]],
+            coefficient_sets: CoefficientSets::Generated(CoefficientGenerator::default()),
             input_width: 32,
             library: CellLibrary {
                 name: "Nangate45nm".into(),
@@ -37,7 +40,7 @@ fn main() -> Result<()> {
                 paper_seed: 1,
                 paper_bit_width: 30,
             },
-            repetitions: NonZeroU32::new(3).unwrap(),
+            repetitions: NonZeroU32::new(1).unwrap(),
         },
         artifacts: ArtifactPolicy::default(),
     };
@@ -49,8 +52,17 @@ fn main() -> Result<()> {
     let mut store = SqliteStore::open("output/mcm.sqlite")?;
 
     println!(
-        "Prepared {} MCM workloads",
+        "Configured {} MCM workloads",
         experiment.suite.coefficient_sets.len()
     );
-    experiment::run(&experiment, &mut builder, &mut store)
+    let id = experiment::run(&experiment, &mut builder, &mut store)?;
+    let history = store.history::<McmOutput>(&HistoryQuery {
+        experiment: id,
+        benchmark_kind: mcm::KIND.into(),
+        benchmark_version: mcm::VERSION,
+        benchmark_parameters: None,
+    })?;
+    println!("Experiment {id}\n");
+    print!("{}", McmView.report(&history)?);
+    Ok(())
 }

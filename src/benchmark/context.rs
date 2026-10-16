@@ -72,15 +72,28 @@ impl<'a, C: ReferenceCache> RunContext<'a, C> {
         let output = command.output()?;
         let elapsed = start.elapsed();
         if self.artifacts.logs {
-            fs::write(self.workspace.join(format!("process-{index:03}.stdout.log")), &output.stdout)?;
-            fs::write(self.workspace.join(format!("process-{index:03}.stderr.log")), &output.stderr)?;
+            fs::write(
+                self.workspace
+                    .join(format!("process-{index:03}.stdout.log")),
+                &output.stdout,
+            )?;
+            fs::write(
+                self.workspace
+                    .join(format!("process-{index:03}.stderr.log")),
+                &output.stderr,
+            )?;
         }
         if !output.status.success() {
             // Yosys errors normally go to stderr; other tools may use stdout.
-            let detail = if output.stderr.is_empty() { &output.stdout } else { &output.stderr };
+            let detail = if output.stderr.is_empty() {
+                &output.stdout
+            } else {
+                &output.stderr
+            };
             let tail = &detail[detail.len().saturating_sub(8192)..];
             return Err(Error::Process {
-                command: description, status: output.status,
+                command: description,
+                status: output.status,
                 detail: String::from_utf8_lossy(tail).trim().into(),
             });
         }

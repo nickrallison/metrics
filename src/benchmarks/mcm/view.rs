@@ -43,11 +43,15 @@ impl View for McmView {
     type Selection = McmSelection;
 
     fn project(&self, history: &History<McmOutput>, selection: &McmSelection) -> Result<ViewData> {
-        if history
-            .benchmarks
-            .values()
-            .any(|benchmark| benchmark.kind != KIND || ![1, VERSION].contains(&benchmark.version))
-        {
+        if history.benchmarks.values().any(|benchmark| {
+            benchmark.kind != KIND
+                || ![1, VERSION].contains(&benchmark.version)
+                || history
+                    .benchmarks
+                    .values()
+                    .next()
+                    .is_some_and(|first| first.version != benchmark.version)
+        }) {
             return Err(Error::InvalidView(
                 "MCM history must use the supported MCM kind/version".into(),
             ));
@@ -138,7 +142,10 @@ impl View for McmView {
     }
 }
 
-fn summarize(output: &McmOutput, metric: McmMetric) -> std::result::Result<(f64, f64), String> {
+pub(super) fn summarize(
+    output: &McmOutput,
+    metric: McmMetric,
+) -> std::result::Result<(f64, f64), String> {
     let pair = match metric {
         McmMetric::RuntimeRatio => (
             mean(
@@ -177,7 +184,7 @@ fn summarize(output: &McmOutput, metric: McmMetric) -> std::result::Result<(f64,
     Ok(pair)
 }
 
-fn area_mean(samples: &[SynthStats], phase: &str) -> std::result::Result<f64, String> {
+pub(super) fn area_mean(samples: &[SynthStats], phase: &str) -> std::result::Result<f64, String> {
     let mut areas = Vec::new();
     for sample in samples {
         let area = sample.area.ok_or_else(|| format!("missing {phase} area"))?;
@@ -190,7 +197,7 @@ fn area_mean(samples: &[SynthStats], phase: &str) -> std::result::Result<f64, St
 }
 
 // Incremental means avoid overflowing a sum of large, otherwise valid areas.
-fn mean(values: impl Iterator<Item = f64>) -> Option<f64> {
+pub(super) fn mean(values: impl Iterator<Item = f64>) -> Option<f64> {
     let mut result = None;
     for (index, value) in values.enumerate() {
         result = Some(match result {

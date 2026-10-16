@@ -1,7 +1,7 @@
 # Implementation guide
 
 One library crate contains the phase contracts and concrete benchmarks. Two
-binaries demonstrate the intended wiring with hard-coded parameters.
+binaries demonstrate MCM execution and result viewing.
 This guide, module documentation, and the preserved reference experiment contain
 the information needed to continue implementation independently of design drafts.
 
@@ -28,6 +28,8 @@ src/
     mcm/
       mod.rs             MCM suite, workload, options, runtime tools
       output.rs          Composite MCM results
+      run.rs             Preparation, repetitions, and reference reuse
+      parse.rs           Yosys, paper, and synthesis output parsing
       view.rs            MCM history projection
     synth.rs             Design/library sweep and synthesis results
   bin/
@@ -42,30 +44,34 @@ cargo run --bin run_mcm
 cargo run --bin view_results
 ```
 
-The examples open/create their SQLite database. `run_mcm` builds and caches each
-selected Yosys commit before reaching the unfinished MCM comparison, which is
-recorded as a failed benchmark outcome. `view_results` can load an
-existing experiment, then reaches the MCM view stub. An unknown experiment is a
-storage error rather than an empty fabricated result.
+`run_mcm` opens/creates its database, builds each selected Yosys commit, and runs
+the complete MCM comparison. `view_results` reads the latest registered
+experiment by default and prints runtime ratios, area savings, coverage, and
+exclusion reasons. Use `--experiment ID`, `--metric runtime|area|all`,
+`--database PATH`, or `--json` to change its selection/output. Unknown experiments
+and missing databases produce explicit errors.
 `run_mcm` configures hard-coded coefficient sets; orchestration freezes them once
 before resolving revisions.
 Edit its repository, branch, commit anchor, library, and paper-tool paths for your
-environment. `view_results` shows the typed query and view pipeline; rendering is
-not implemented.
+environment. Text rendering and JSON export are implemented; graphical rendering
+is deferred.
 
 Working pieces are the types, serialization, suite expansion, tool binding,
 reference storage, typed SQLite history, Git revision resolution, cached Yosys
-builds, and sequential orchestration. The orchestration loop registers frozen
+builds, timed MCM execution/parsing, MCM projections, and sequential orchestration.
+The orchestration loop registers frozen
 definitions and revision order, starts/finalizes attempts, records
 benchmark failures, and completes only processed commits. Tests cover fake tool
 dependencies with real SQLite, database reopen/interruption behavior, and Git
-resolution against temporary repositories. Timed execution,
-benchmark-output parsing, history projection, and graphical rendering remain stubs.
+resolution against temporary repositories. The generic synthesis benchmark and
+graphical rendering remain stubs.
 
 See [SQLite storage](storage.md) for schema layout, lifecycle rules, reference
 caching, history selection, and the fallible `SqliteStore::open` constructor.
 See [Yosys builds](builds.md) for prerequisites, cache layout, logs, and the
 optional real-build check.
+See [MCM execution and results](mcm.md) for sampling, reference reuse, retention,
+version boundaries, and viewer usage.
 
 Revision resolution uses the installed Git CLI without fetching, checking out, or
 modifying the worktree. It accepts local branch names and full `refs/heads/` or
@@ -85,8 +91,8 @@ means the comparisons were processed, not that every comparison succeeded.
 With default retention, each attempt uses a temporary directory cleaned on return
 or unwind. Requested artifacts keep a unique workspace under
 `output/artifacts/<experiment>/attempt-*`, whose absolute path is recorded with
-the attempt. The context/benchmark must select which files to retain; selective
-file handling is still part of the unfinished context implementation.
+the attempt. MCM retains only the requested logs, scripts/input design, and
+diagnostic netlists; scratch files are removed even on failure.
 
 ## Behavior contracts
 
@@ -118,18 +124,12 @@ porting notes distinguish historical behavior from the intended Rust contracts.
 
 ## Implementation order
 
-1. Implement one coefficient-set MCM comparison: preparation, timed processes,
-   parsing, and typed output. Use explicit coefficient sets before adding random
-   generation; retain all repeated observations.
-2. Connect the paper-tool cache to SQLite reference storage. Define complete keys,
-   measurement environment, and refresh behavior; immutable IDs are implemented.
-3. Implement the typed MCM view for one commit. SQLite registration, attempt
-   start/finish, build failures, completion, and typed history are implemented.
-4. Exercise the sequential history loop with real MCM comparisons. Revision
-   resolution, cached Yosys builds, and SQLite storage are implemented.
-5. Add verified resume, explicit reruns, input digest checks, and artifact
+1. Extend explicit coefficient sets with reproducible random generation or a
+   manifest adapter; preserve generated values in the frozen collection.
+2. Extend the scalar MCM view with quality, depth, and distributions.
+3. Add verified resume, explicit reruns, input digest checks, and artifact
    inspection. These must not silently change workloads or replace measurements.
-6. Add a graphical renderer, a synthesis view, and a design-manifest adapter.
+4. Implement the generic synthesis benchmark/view and a graphical renderer.
 
 Existing suite expansion and tool binding are working scaffolding. The next
 steps do not require a scheduler, plugin registry, generic stage graph,
@@ -156,18 +156,17 @@ configurable build-profile hierarchy, or universal metric database.
 - Main-line traversal is the proposed branch rule. Supporting merged side
   histories or multiple branches in one experiment remains deferred.
 - Current MCM output is all-or-failure. Decide whether per-phase outcomes should
-  retain partial comparisons before implementing parsing/execution failures.
-- Decide whether paper timing is reused across compatible sessions or refreshed
-  each session while caching structural results separately. Choose the environment
-  description and deterministic cache-key encoding before enabling reuse.
+  retain partial comparisons after a later phase fails.
+- Paper timings are refreshed each experiment and reused across its commits.
+  Cross-session timing reuse or separate structural caching needs a compatible
+  environment policy before being enabled.
 - Raw artifacts are off by default. Attempt directories are isolated and retained
-  only on request; selective file retention and failure-only log policy remain
-  context implementation decisions.
+  only on request. A failure-only retention policy remains a possible extension.
 - History selects the latest finished measurement per workload/commit and excludes
   inspections and unfinished attempts. Automatic resume still needs a runner
   policy; retries must not be pooled as independent repetitions.
-- Resolve the historical Verilog sizing questions documented with the reference
-  before generating production workloads. Version changes affecting results.
+- MCM version 2 fixes signed coefficient and product sizing. Further procedure
+  changes affecting results need another explicit version boundary.
 - Typed history is the initial query boundary. Metric indexing, tables, coverage
   counts, and distributions can extend the minimal series projection as needed.
 - Choose the initial design-manifest/preparation adapter and graphical frontend.

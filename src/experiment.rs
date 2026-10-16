@@ -47,8 +47,13 @@ pub struct Experiment<S: Suite> {
 ///
 /// Benchmark failures are recorded and execution continues. Build, input setup,
 /// workspace, and storage errors stop execution without completing that commit.
-/// `Ok(())` means all requested comparisons were processed, not all succeeded.
-pub fn run<S, B, D>(experiment: &Experiment<S>, builder: &mut B, store: &mut D) -> Result<()>
+/// Returns the experiment ID when all comparisons were processed. Individual
+/// comparisons may have failed; their outcomes remain available under this ID.
+pub fn run<S, B, D>(
+    experiment: &Experiment<S>,
+    builder: &mut B,
+    store: &mut D,
+) -> Result<ExperimentId>
 where
     S: Suite,
     B: Builder<Tool = S::Tool>,
@@ -65,7 +70,7 @@ fn run_resolved<S, B, D>(
     commits: Vec<Commit>,
     builder: &mut B,
     store: &mut D,
-) -> Result<()>
+) -> Result<ExperimentId>
 where
     S: Suite,
     B: Builder<Tool = S::Tool>,
@@ -129,11 +134,22 @@ where
                     Err(error) => Outcome::Failed(error.to_string()),
                 }
             };
+            match &outcome {
+                Outcome::Failed(reason) => eprintln!(
+                    "{} workload {benchmark_index} failed: {reason}",
+                    commit.id.0
+                ),
+                Outcome::Unsupported(reason) => eprintln!(
+                    "{} workload {benchmark_index} unsupported: {reason}",
+                    commit.id.0
+                ),
+                Outcome::Succeeded(_) => {}
+            }
             store.finish_run(record, SystemTime::now(), &outcome)?;
         }
         store.complete_commit(experiment_id, &commit.id)?;
     }
-    Ok(())
+    Ok(experiment_id)
 }
 
 fn workspace(experiment: ExperimentId, retain: bool) -> Result<TempDir> {

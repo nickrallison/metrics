@@ -65,8 +65,10 @@ statistics-block scope when implementing a parser for other output shapes.
 The Verilog generator also preserves historical sizing choices: coefficient
 `bit_width` is calculated using `len(bin(value)) - 2`, which includes an extra
 character for negative values, while literal width is `input_width - 1`.
-Review signedness, representability, and output widths before porting. Any
-correction that changes workloads needs an explicit benchmark version boundary.
+The Rust implementation uses MCM procedure version 2: coefficient literals have
+a sign bit plus all magnitude bits, and output widths are the sum of the operand
+widths. This fixes truncation/sign interpretation while preserving coefficient
+values and order. Version 1 experiments remain separate and readable.
 
 ## Statistics and differences from the Rust design
 

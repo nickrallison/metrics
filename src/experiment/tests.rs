@@ -262,7 +262,7 @@ impl Harness {
         }
     }
 
-    fn execute(&mut self) -> Result<()> {
+    fn execute(&mut self) -> Result<ExperimentId> {
         let benchmarks = self.experiment.suite.benchmarks()?;
         let commits = ["a", "b"]
             .into_iter()

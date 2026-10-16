@@ -10,3 +10,4 @@ thiserror = "2"
 tempfile = "3"
 rusqlite = { version = "0.40", features = ["bundled"] }
 sha2 = "0.10.9"
+rand_mt = { version = "6.1.0", default-features = false }

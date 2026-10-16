@@ -16,12 +16,19 @@
 //! Current output models successful comparisons. A phase error fails the whole
 //! comparison unless partial-result fields are explicitly introduced later.
 
+mod generate;
 mod output;
 mod parse;
+mod report;
 mod run;
 mod view;
 
+pub use generate::{CoefficientGenerator, CoefficientSets};
 pub use output::{McmOutput, PaperStats, YosysStats};
+pub use report::{
+    ComparisonCounts, McmCommitReport, McmReport, McmSummary, McmWorkloadReport,
+    McmWorkloadSummary, Quality, TimingSummary, ToolSummary,
+};
 pub use view::{McmMetric, McmSelection, McmView};
 
 use std::{num::NonZeroU32, path::PathBuf};
@@ -54,10 +61,10 @@ pub struct McmOptions {
     pub paper_bit_width: u32,
 }
 
-/// Explicit workloads first; seeded generation can be added here later.
+/// Expand explicit or generated coefficients once when freezing the experiment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McmSuite {
-    pub coefficient_sets: Vec<Vec<i64>>,
+    pub coefficient_sets: CoefficientSets,
     pub input_width: u32,
     pub library: CellLibrary,
     pub paper: PaperTool,
@@ -87,9 +94,10 @@ impl Suite for McmSuite {
     fn benchmarks(&self) -> Result<Vec<McmBenchmark>> {
         Ok(self
             .coefficient_sets
-            .iter()
+            .generate()?
+            .into_iter()
             .map(|coefficients| McmBenchmark {
-                coefficients: coefficients.clone(),
+                coefficients,
                 input_width: self.input_width,
                 library: self.library.clone(),
                 options: self.options.clone(),

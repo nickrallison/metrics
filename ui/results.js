@@ -2,7 +2,11 @@
 "use strict";
 (async () => {
   const $ = id => document.getElementById(id);
-  const snapshot = JSON.parse($("snapshot-data").textContent);
+  const snapshotJson = typeof dioxus !== "undefined" && typeof dioxus.recv === "function"
+    ? await dioxus.recv()
+    : $("snapshot-data")?.textContent;
+  if (snapshotJson == null) throw new Error("No benchmark snapshot was provided.");
+  const snapshot = JSON.parse(snapshotJson);
   const plot = $("plot");
   const colors = ["#4b72b8", "#d6368f", "#31508a", "#9c286a", "#819ed0", "#ea91c2"];
   const symbols = ["circle", "diamond", "square", "triangle-up", "cross", "triangle-down"];

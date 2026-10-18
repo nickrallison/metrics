@@ -11,6 +11,21 @@ cargo run --bin run_mcm -- --output-dir output --name manual-mcm --keep-artifact
 cargo run --bin view_results -- --output-dir output --name manual-mcm --details
 ```
 
+## Web graph
+
+Install the Dioxus CLI (`cargo install dioxus-cli --version '~0.7'`), then run:
+
+```sh
+cd webapp
+dx serve
+```
+
+Open the local address printed by `dx`. The app reads
+`../output/mcm/database.sqlite`; set `BENCHMARKS_DATABASE` to point at another
+SQLite database. It loads the latest experiment on page load and provides the
+same metric, input projection, mouse navigation, and SVG export controls as the
+offline graph. Use **Refresh results** after a benchmark run.
+
 The runner uses hard-coded repository, branch, revision selection, coefficients,
 Liberty file, and paper executable paths in `src/bin/run_mcm.rs`. Its default paper
 executable and library come from `../yosys/tests/techmap/mcm`. Both must exist;

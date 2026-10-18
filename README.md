@@ -21,6 +21,10 @@ Open `output/mcm/results.html` in a browser. The offline graph supports metric
 and coefficient selection, comparisons, mouse zoom/pan, and SVG export.
 Regenerate it to include new results. See [usage](docs/mcm.md).
 
+Run the interactive web version with `cd webapp && dx serve`.
+It reads `../output/mcm/database.sqlite` by default; set
+`BENCHMARKS_DATABASE=/path/to/database.sqlite` to use another database.
+
 # Further Brain Thoughts
 
 - Collapse Criteria

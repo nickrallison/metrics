@@ -1,14 +1,9 @@
+//! Typed sample extraction and capabilities for MCM analyses.
+
 use crate::{
-    analysis::{
-        AnalysisDescriptor, AnalysisProvider, AnalysisResult, ChartPoint, ChartSeries, ChartSpec,
-        DetailField, ParameterDescriptor, ParameterKind, ParameterOption, ReferenceLine,
-    },
-    benchmarks::mcm::{self, McmMetric, McmOutput, McmSelection, McmView},
-    store::{
-        Analysis, BenchmarkDefinition, ExperimentId, Frame, History, HistoryQuery, Query,
-        SqliteStore, Store,
-    },
-    view::{Point, View},
+    analysis::*,
+    benchmarks::{mcm::{self, McmOutput}, synth::SynthStats},
+    store::{ExperimentId, SqliteStore},
 };
 
 pub struct McmPerformance;
@@ -16,236 +11,69 @@ pub struct McmPerformance;
 impl AnalysisProvider for McmPerformance {
     fn descriptor(&self) -> AnalysisDescriptor {
         AnalysisDescriptor {
-            id: "mcm.performance".into(),
-            label: "Performance history".into(),
+            id: "mcm.performance".into(), label: "Performance history".into(),
             description: "Compare measurements across the experiment's frozen commit order.".into(),
-            parameters: vec![
-                ParameterDescriptor {
-                    id: "metric".into(),
-                    label: "Metric".into(),
-                    kind: ParameterKind::Select,
-                    options: vec![
-                        ParameterOption {
-                            value: "runtime".into(),
-                            label: "Runtime ratio".into(),
-                        },
-                        ParameterOption {
-                            value: "area".into(),
-                            label: "Area savings".into(),
-                        },
-                    ],
-                    default: Some("runtime".into()),
-                },
-                ParameterDescriptor {
-                    id: "series".into(),
-                    label: "Series".into(),
-                    kind: ParameterKind::Select,
-                    options: vec![
-                        ParameterOption {
-                            value: "aggregate".into(),
-                            label: "Aggregate inputs".into(),
-                        },
-                        ParameterOption {
-                            value: "workloads".into(),
-                            label: "Each input".into(),
-                        },
-                    ],
-                    default: Some("aggregate".into()),
-                },
+            metrics: vec![
+                metric("runtime_ratio", "Runtime ratio", "ratio", MetricFormula::Ratio,
+                    "Runtime divided by the paper reference. Lower is better.", Some(ReferenceLine { value: 1.0, label: "Equal runtime".into() })),
+                metric("runtime", "Runtime", "s", MetricFormula::Identity, "Yosys MCM wall-clock time.", None),
+                metric("paper_runtime", "Reference runtime", "s", MetricFormula::Identity, "Paper reference wall-clock time.", None),
+                metric("area_savings", "Area savings", "%", MetricFormula::PercentSavings,
+                    "Area saved against synthesis without MCM. Higher is better.", Some(ReferenceLine { value: 0.0, label: "Equal area".into() })),
+                metric("area_with", "Area with MCM", "area", MetricFormula::Identity, "Synthesis area with MCM enabled.", None),
+                metric("area_without", "Baseline area", "area", MetricFormula::Identity, "Synthesis area without MCM.", None),
+                metric("adds_subs", "Add/sub operations", "operations", MetricFormula::Identity, "Add and subtract operations after MCM.", None),
+                metric("multipliers", "Remaining multipliers", "operations", MetricFormula::Identity, "Multipliers remaining after MCM.", None),
+                metric("depth", "Depth", "levels", MetricFormula::Identity, "Reported MCM depth; absent when unavailable.", None),
             ],
+            benchmarks: vec![], commits: vec![], filter_fields: vec![], parameters: vec![],
         }
     }
 
-    fn supports(&self, benchmark_types: &[(String, u32)]) -> bool {
-        benchmark_types
-            .iter()
-            .any(|(kind, version)| kind == mcm::KIND && [1, mcm::VERSION].contains(version))
+    fn supports(&self, types: &[(String, u32)]) -> bool {
+        types.iter().any(|(kind, version)| kind == mcm::KIND && [1, mcm::VERSION].contains(version))
     }
 
-    fn run(
-        &self,
-        store: &SqliteStore,
-        experiment: ExperimentId,
-        parameters: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<AnalysisResult, String> {
-        let metric = match parameters.get("metric").and_then(|v| v.as_str()) {
-            Some("area") => McmMetric::AreaSavings,
-            Some("runtime") | None => McmMetric::RuntimeRatio,
-            Some(value) => return Err(format!("Unknown metric {value:?}")),
-        };
-        let projection = match parameters.get("series").and_then(|v| v.as_str()) {
-            Some("workloads") => Projection::EachWorkload,
-            Some("aggregate") | None => Projection::Aggregate,
-            Some(value) => return Err(format!("Unknown series selection {value:?}")),
-        };
-
-        let definition = store
-            .experiment(experiment)
-            .map_err(|error| error.to_string())?;
-        let versions: std::collections::BTreeSet<_> = definition
-            .benchmarks
-            .iter()
-            .filter(|benchmark| benchmark.kind == mcm::KIND)
-            .map(|benchmark| benchmark.version)
-            .collect();
-        if versions.len() > 1 {
-            return Err("Experiment contains multiple MCM procedure versions.".into());
-        }
-        if versions.is_empty() {
-            return Err("The selected experiment has no MCM measurements.".into());
-        }
-        let version = *versions.first().unwrap_or(&mcm::VERSION);
-        let query = Query::new(HistoryQuery {
-            experiment,
-            benchmark_kind: mcm::KIND.into(),
-            benchmark_version: version,
-            benchmark_parameters: None,
-        });
-        let frame = store
-            .query::<McmOutput>(&query)
-            .map_err(|error| error.to_string())?;
-
-        Analysis::new(move |frame: Frame<McmOutput>| project(frame, metric, projection)).run(frame)
+    fn run(&self, store: &SqliteStore, experiment: ExperimentId, plan: &AnalysisPlan) -> Result<AnalysisResult, String> {
+        let descriptor = self.descriptor();
+        let metric = descriptor.metrics.iter().find(|m| m.id == plan.metric).ok_or("Unknown metric")?;
+        let frame = load_frame::<McmOutput>(store, experiment, mcm::KIND, &[1, mcm::VERSION], plan)?;
+        analyze_frame(frame, metric, plan, samples)
     }
 }
 
-#[derive(Clone, Copy)]
-enum Projection {
-    Aggregate,
-    EachWorkload,
+fn metric(id: &str, label: &str, unit: &str, formula: MetricFormula, description: &str, reference: Option<ReferenceLine>) -> MetricDescriptor {
+    let mut benchmark_reductions = vec![Reduction::Mean, Reduction::Median, Reduction::Min, Reduction::Max,
+        Reduction::StdDev, Reduction::P90, Reduction::P95, Reduction::Count];
+    if formula == MetricFormula::Identity { benchmark_reductions.push(Reduction::Sum); }
+    if formula == MetricFormula::Ratio { benchmark_reductions.insert(0, Reduction::RatioOfMeans); }
+    MetricDescriptor {
+        id: id.into(), label: label.into(), description: description.into(), unit: unit.into(), formula,
+        repetition_reductions: vec![Reduction::Mean, Reduction::Median, Reduction::Min, Reduction::Max, Reduction::P90, Reduction::P95],
+        benchmark_reductions, default_repetitions: Reduction::Mean,
+        default_benchmarks: if formula == MetricFormula::Ratio { Reduction::RatioOfMeans } else { Reduction::Mean }, reference,
+    }
 }
 
-fn project(
-    frame: Frame<McmOutput>,
-    metric: McmMetric,
-    projection: Projection,
-) -> Result<AnalysisResult, String> {
-    let history = History {
-        commits: frame.commits,
-        benchmarks: frame.benchmarks,
-        records: frame.runs,
-    };
-    let selection = McmSelection { metric };
-    let view = McmView;
-    let (title, series_label, unit, reference, reference_label, description) = match metric {
-        McmMetric::RuntimeRatio => (
-            "Runtime ratio",
-            "MCM runtime ratio (Yosys / paper)",
-            "ratio",
-            1.0,
-            "Equal runtime",
-            "Yosys runtime divided by the paper reference. Lower is better.",
-        ),
-        McmMetric::AreaSavings => (
-            "Area savings",
-            "MCM area savings",
-            "%",
-            0.0,
-            "Equal area",
-            "Area saved against synthesis without MCM. Higher is better.",
-        ),
-    };
+fn areas(samples: &[SynthStats]) -> Result<Vec<f64>, String> {
+    samples.iter().map(|sample| sample.area.filter(|area| area.is_finite() && *area >= 0.0)
+        .ok_or_else(|| "Missing or invalid synthesis area".into())).collect()
+}
 
-    let series = match projection {
-        Projection::Aggregate => view
-            .project(&history, &selection)
-            .map_err(|error| error.to_string())?
-            .series
-            .into_iter()
-            .map(|series| to_chart_series("aggregate".into(), series_label.into(), series.points))
-            .collect(),
-        Projection::EachWorkload => {
-            let mut series = Vec::new();
-            for (index, definition) in benchmarks_for(&history) {
-                let workload_history = History {
-                    commits: history.commits.clone(),
-                    benchmarks: [(index, definition.clone())].into(),
-                    records: history
-                        .records
-                        .iter()
-                        .filter(|entry| entry.record.benchmark_index == index)
-                        .cloned()
-                        .collect(),
-                };
-                let projected = view
-                    .project(&workload_history, &selection)
-                    .map_err(|error| error.to_string())?;
-                let projected = projected
-                    .series
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| "MCM projection returned no series".to_string())?;
-                let label = definition
-                    .parameters
-                    .get("coefficients")
-                    .map(|coefficients| format!("Input {index}: {coefficients}"))
-                    .unwrap_or_else(|| format!("Input {index}"));
-                series.push(to_chart_series(
-                    format!("input-{index}"),
-                    label,
-                    projected.points,
-                ));
-            }
-            series
-        }
-    };
-
-    Ok(AnalysisResult {
-        title: format!("{title} history"),
-        description: format!("{description} Unit: {unit}."),
-        chart: ChartSpec {
-            x_label: "Commit order".into(),
-            y_label: format!("{title} ({unit})"),
-            reference_lines: vec![ReferenceLine {
-                value: reference,
-                label: reference_label.into(),
-            }],
-            series,
-        },
-        tables: Vec::new(),
+fn samples(output: &McmOutput, metric: &str) -> Result<MetricSamples, String> {
+    let runtime = || output.yosys_mcm.values.iter().map(|v| v.wall_clock_time.as_secs_f64()).collect();
+    let reference_runtime = || output.paper.value.values.iter().map(|v| v.wall_clock_time.as_secs_f64()).collect();
+    Ok(match metric {
+        "runtime" => MetricSamples::values(runtime()),
+        "paper_runtime" => MetricSamples::values(reference_runtime()),
+        "runtime_ratio" => MetricSamples::compared(runtime(), reference_runtime()),
+        "area_with" => MetricSamples::values(areas(&output.synth_with_mcm.values)?),
+        "area_without" => MetricSamples::values(areas(&output.synth_without_mcm.values)?),
+        "area_savings" => MetricSamples::compared(areas(&output.synth_with_mcm.values)?, areas(&output.synth_without_mcm.values)?),
+        "adds_subs" => MetricSamples::values(output.yosys_mcm.values.iter().map(|v| v.adds_subs as f64).collect()),
+        "multipliers" => MetricSamples::values(output.yosys_mcm.values.iter().map(|v| v.multipliers as f64).collect()),
+        "depth" => MetricSamples::values(output.yosys_mcm.values.iter().map(|v| v.depth.map(|v| v as f64)
+            .ok_or_else(|| "Depth is unavailable".to_string())).collect::<Result<_, _>>()?),
+        _ => return Err("Unknown metric".into()),
     })
-}
-
-fn benchmarks_for(history: &History<McmOutput>) -> Vec<(usize, BenchmarkDefinition)> {
-    history
-        .benchmarks
-        .iter()
-        .map(|(&index, definition)| (index, definition.clone()))
-        .collect()
-}
-
-fn to_chart_series(id: String, label: String, points: Vec<Point>) -> ChartSeries {
-    ChartSeries {
-        id,
-        label,
-        points: points
-            .into_iter()
-            .map(|point| {
-                let mut details = vec![
-                    DetailField {
-                        label: "Commit".into(),
-                        value: point.commit.0.clone(),
-                    },
-                    DetailField {
-                        label: "Coverage".into(),
-                        value: format!(
-                            "{} / {} inputs",
-                            point.coverage.included, point.coverage.total
-                        ),
-                    },
-                ];
-                details.extend(point.coverage.exclusions.into_iter().map(|exclusion| {
-                    DetailField {
-                        label: format!("Input {} excluded", exclusion.benchmark_index),
-                        value: exclusion.reason,
-                    }
-                }));
-                ChartPoint {
-                    x: point.commit.0,
-                    y: point.value,
-                    details,
-                }
-            })
-            .collect(),
-    }
 }

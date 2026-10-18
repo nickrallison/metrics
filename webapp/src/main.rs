@@ -1,11 +1,12 @@
 use dioxus::prelude::*;
 
 pub mod components;
+mod controls;
 #[cfg(feature = "server")]
 mod providers;
 
 pub use benchmark_analysis_types as presentation;
-use benchmark_analysis_types::{AnalysisRequest, Catalog};
+use benchmark_analysis_types::{AnalysisPlan, AnalysisRequest, Catalog, PlotOptions};
 #[cfg(feature = "server")]
 use benchmarks::{analysis::AnalysisRegistry, store::SqliteStore};
 use components::AnalysisWorkspace;
@@ -28,11 +29,10 @@ async fn load_catalog() -> Result<Catalog<String>, ServerFnError> {
             .map(|entry| {
                 let store = SqliteStore::open(&entry.database).map_err(server_error)?;
                 let definition = store.experiment(entry.experiment).map_err(server_error)?;
-                let benchmark_types = benchmark_types(&definition);
                 Ok(presentation::ExperimentOption {
                     id: entry.id.to_string(),
                     label: format!("{} · {}", entry.label, entry.experiment),
-                    analyses: registry.descriptors_for(&benchmark_types),
+                    analyses: registry.descriptors_for(&definition),
                 })
             })
             .collect::<Result<Vec<_>, ServerFnError>>()?,
@@ -57,8 +57,8 @@ async fn run_analysis(
             &request.analysis,
             &store,
             entry.experiment,
-            &benchmark_types(&definition),
-            &request.parameters,
+            &definition,
+            &request.plan,
         )
         .map_err(ServerFnError::new)
 }
@@ -68,15 +68,6 @@ fn registry() -> AnalysisRegistry {
     let mut registry = AnalysisRegistry::default();
     benchmarks::benchmarks::register_analyses(&mut registry);
     registry
-}
-
-#[cfg(feature = "server")]
-fn benchmark_types(definition: &benchmarks::store::ExperimentDefinition) -> Vec<(String, u32)> {
-    definition
-        .benchmarks
-        .iter()
-        .map(|benchmark| (benchmark.kind.clone(), benchmark.version))
-        .collect()
 }
 
 #[cfg(feature = "server")]
@@ -103,101 +94,74 @@ fn App() -> Element {
     }
 }
 
-#[component]
-fn Workspace(catalog: Catalog<String>) -> Element {
-    let mut experiment = use_signal(|| catalog.experiments.first().map(|item| item.id.clone()));
-    let mut analysis = use_signal(|| {
-        catalog
-            .experiments
-            .first()
-            .and_then(|experiment| experiment.analyses.first())
-            .map(|item| item.id.clone())
-            .unwrap_or_default()
-    });
-    let mut parameters = use_signal(|| {
-        catalog
-            .experiments
-            .first()
-            .and_then(|experiment| experiment.analyses.first())
-            .map(|analysis| default_parameters(Some(analysis)))
-            .unwrap_or_default()
-    });
-    let experiment_catalog = catalog.clone();
-    let analysis_catalog = catalog.clone();
-    let result = use_resource(move || {
-        let experiment = experiment();
-        let analysis = analysis();
-        let parameters = parameters();
-        async move {
-            let Some(experiment) = experiment.filter(|_| !analysis.is_empty()) else {
-                return Ok(None);
-            };
-            run_analysis(AnalysisRequest {
-                experiment,
-                analysis,
-                parameters,
-            })
-            .await
-            .map(Some)
-        }
-    });
+#[derive(Debug, Clone, PartialEq)]
+struct WorkspaceSelection {
+    experiment: String,
+    analysis: String,
+    plan: Option<AnalysisPlan>,
+}
 
-    let (data, error, loading) = match result.read().as_ref() {
-        Some(Ok(data)) => (data.clone(), None, false),
-        Some(Err(error)) => (None, Some(error.to_string()), false),
-        None => (None, None, true),
-    };
-
-    rsx! {
-        AnalysisWorkspace {
-            catalog,
-            selected_experiment: experiment().unwrap_or_default(),
-            analysis_id: analysis(),
-            parameters: parameters(),
-            result: data,
-            error,
-            loading,
-            on_experiment_change: move |id: String| {
-                experiment.set(Some(id.clone()));
-                let descriptor = experiment_catalog
-                    .experiments
-                    .iter()
-                    .find(|item| item.id == id)
-                    .and_then(|item| item.analyses.first());
-                analysis.set(descriptor.map(|item| item.id.clone()).unwrap_or_default());
-                parameters.set(default_parameters(descriptor));
-            },
-            on_analysis_change: move |id: String| {
-                analysis.set(id.clone());
-                let descriptor = analysis_catalog
-                    .experiments
-                    .iter()
-                    .find(|item| Some(&item.id) == experiment().as_ref())
-                    .and_then(|item| item.analyses.iter().find(|item| item.id == id));
-                parameters.set(default_parameters(descriptor));
-            },
-            on_parameter_change: move |(id, value): (String, String)| {
-                let mut current = parameters();
-                current.insert(id, serde_json::Value::String(value));
-                parameters.set(current);
-            },
+impl WorkspaceSelection {
+    fn for_experiment(experiment: Option<&presentation::ExperimentOption<String>>) -> Self {
+        let descriptor = experiment.and_then(|e| e.analyses.first());
+        Self {
+            experiment: experiment.map(|e| e.id.clone()).unwrap_or_default(),
+            analysis: descriptor.map(|a| a.id.clone()).unwrap_or_default(),
+            plan: descriptor.map(AnalysisPlan::for_descriptor),
         }
     }
 }
 
-fn default_parameters(
-    analysis: Option<&presentation::AnalysisDescriptor>,
-) -> serde_json::Map<String, serde_json::Value> {
-    analysis
-        .into_iter()
-        .flat_map(|analysis| &analysis.parameters)
-        .filter_map(|parameter| {
-            parameter.default.as_ref().map(|value| {
-                (
-                    parameter.id.clone(),
-                    serde_json::Value::String(value.clone()),
-                )
-            })
-        })
-        .collect()
+#[component]
+fn Workspace(catalog: Catalog<String>) -> Element {
+    let mut selection = use_signal(|| WorkspaceSelection::for_experiment(catalog.experiments.first()));
+    let mut plot = use_signal(PlotOptions::default);
+    let result = use_resource(move || {
+        let snapshot = selection();
+        async move {
+            let data = if let Some(plan) = snapshot.plan.clone() {
+                run_analysis(AnalysisRequest {
+                    experiment: snapshot.experiment.clone(), analysis: snapshot.analysis.clone(), plan,
+                }).await.map(Some).map_err(|e| e.to_string())
+            } else { Ok(None) };
+            (snapshot, data)
+        }
+    });
+    // A resource can retain its previous value while refreshing. Only display
+    // a response that belongs to the complete current selection and plan.
+    let current = selection();
+    let (data, error, loading) = match result.read().as_ref() {
+        Some((snapshot, Ok(data))) if *snapshot == current => (data.clone(), None, false),
+        Some((snapshot, Err(error))) if *snapshot == current => (None, Some(error.clone()), false),
+        _ => (None, None, true),
+    };
+    let experiments = catalog.clone();
+    let analyses = catalog.clone();
+    rsx! {
+        AnalysisWorkspace {
+            catalog,
+            selected_experiment: current.experiment,
+            analysis_id: current.analysis,
+            plan: current.plan,
+            plot: plot(),
+            result: data, error, loading,
+            on_experiment_change: move |id: String| {
+                selection.set(WorkspaceSelection::for_experiment(experiments.experiments.iter().find(|e| e.id == id)));
+            },
+            on_analysis_change: move |id: String| {
+                let mut next = selection();
+                let descriptor = analyses.experiments.iter().find(|e| e.id == next.experiment)
+                    .and_then(|e| e.analyses.iter().find(|a| a.id == id));
+                next.analysis = id;
+                next.plan = descriptor.map(AnalysisPlan::for_descriptor);
+                selection.set(next);
+            },
+            on_plan_change: move |plan| {
+                let mut next = selection();
+                next.plan = Some(plan);
+                selection.set(next);
+            },
+            on_plot_change: move |options| plot.set(options),
+        }
+    }
 }

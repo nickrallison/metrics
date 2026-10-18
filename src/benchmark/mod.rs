@@ -29,10 +29,18 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use crate::{Result, store::ReferenceCache};
 
 pub trait Benchmark: Serialize {
+    // Add traits to input, like a custom EQ for versioning
     type Input;
+    // are there any constraints on the output?
+    // I know I want a frame like output
     type Output: Serialize + DeserializeOwned;
 
     fn kind(&self) -> &'static str;
+    // I don't think I like having this decided by the type,
+    // the DB / program should up it if its a superset, same if its equal, and
+    // warn and require confirmation otherwise
+    // maybe add a version type with minor and major versions
+    // minor can be downcast, major cannot
     fn version(&self) -> u32;
 
     fn run<C: ReferenceCache>(

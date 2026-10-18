@@ -55,3 +55,63 @@ button:hover, select:hover { border-color: var(--blue); }
   .details-card, .result-table { padding: 18px 16px; }
   .details-card dl { grid-template-columns: 1fr; gap: 4px; }
 }
+
+/* Analysis editor */
+.workspace { max-width: 1900px; }
+.page-heading { display: flex; justify-content: space-between; align-items: end; gap: 24px; }
+.page-heading .controls { margin-bottom: 0; }
+.analysis-layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 24px; align-items: start; }
+.analysis-sidebar { border: 1px solid var(--border); border-radius: 7px; background: white; }
+.editor-section { padding: 18px; border-bottom: 1px solid var(--border); scroll-margin-top: 20px; }
+.editor-section:last-child { border-bottom: 0; }
+.editor-section h2 { margin: 0 0 15px; font-size: 14px; font-weight: 650; }
+.editor-section .field { min-width: 0; margin-bottom: 12px; }
+.editor-section .field:last-child { margin-bottom: 0; }
+.editor-section select, .editor-section input:not([type=checkbox]) { width: 100%; min-width: 0; }
+.editor-section p { line-height: 1.6; margin: 10px 0 0; }
+.editor-section summary { cursor: pointer; }
+.picker { border: 1px solid #d7dce5; border-radius: 5px; font-weight: 400; background: white; }
+.picker > summary { padding: 10px; cursor: pointer; }
+.picker-body { padding: 10px; border-top: 1px solid var(--border); }
+.picker-actions { display: flex; gap: 6px; margin: 8px 0; }
+.picker-actions button { min-height: 28px; padding: 4px 8px; font-size: 11px; }
+.picker-list { max-height: 260px; overflow-y: auto; }
+.check-row { display: flex; align-items: start; gap: 8px; padding: 7px 4px; font-size: 12px; font-weight: 400; overflow-wrap: anywhere; }
+.check-row input[type=checkbox] { min-height: 0; margin: 2px 0 0; width: 14px; height: 14px; accent-color: var(--blue); flex: 0 0 auto; }
+.check-row small { display: block; color: var(--muted); max-height: 32px; overflow: hidden; margin-top: 3px; font-size: 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.chip { min-height: 25px; padding: 3px 7px; font-size: 11px; color: var(--blue); background: var(--panel); }
+.text-button { color: var(--blue); background: transparent; border: 0; padding: 7px 0; font-size: 12px; min-height: 28px; }
+.filter-row { display: grid; gap: 7px; background: var(--panel); padding: 10px; border-radius: 5px; margin: 10px 0; }
+.filter-heading { display: flex; gap: 4px; min-width: 0; }
+.filter-heading select { flex: 1; }
+.remove-button { flex: 0 0 26px; min-height: 28px; border: 0; padding: 0; background: none; }
+.more-options { margin-top: 12px; font-size: 12px; }
+.more-options[open] > summary { margin-bottom: 14px; }
+.analysis-output { min-width: 0; }
+.recipe { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; padding: 5px 0 16px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.recipe a { color: inherit; text-decoration: none; }
+.recipe a:hover { color: var(--blue); text-decoration: underline; }
+.chart-placeholder { display: grid; place-items: center; min-height: 350px; margin: 0; color: var(--muted); }
+.coverage-summary { margin-top: 12px; font-size: 12px; color: var(--muted); }
+.coverage-summary summary { cursor: pointer; }
+.coverage-summary[open] { max-height: 260px; overflow: auto; }
+.coverage-entry { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.coverage-entry li { line-height: 1.6; }
+.notice { font-size: 12px; line-height: 1.6; padding: 8px 12px; margin: 12px 24px; background: var(--panel); border-left: 3px solid var(--pink); }
+select:disabled { opacity: .55; cursor: default; }
+@media (max-width: 1000px) {
+  .analysis-layout { grid-template-columns: 250px minmax(0, 1fr); gap: 16px; }
+  .page-heading { align-items: start; }
+  .page-heading .controls { gap: 8px; }
+  .page-heading .field { min-width: 150px; }
+}
+@media (max-width: 760px) {
+  .page-heading { display: block; }
+  .page-heading .controls { margin-top: 18px; }
+  .analysis-layout { grid-template-columns: 1fr; }
+  .analysis-sidebar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .editor-section { min-width: 0; }
+  .notice { margin: 12px 16px; }
+}
+@media (max-width: 450px) { .analysis-sidebar { display: block; } }

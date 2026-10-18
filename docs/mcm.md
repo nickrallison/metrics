@@ -6,7 +6,6 @@ cargo run --bin run_mcm -- --jobs 8
 cargo run --bin run_mcm -- --perf --workload 0
 cargo run --bin view_results
 cargo run --bin view_results -- --experiment 7 --metric area --json
-cargo run --bin view_results -- --html output/mcm/results.html
 cargo run --bin run_mcm -- --output-dir output --name manual-mcm --keep-artifacts
 cargo run --bin view_results -- --output-dir output --name manual-mcm --details
 ```
@@ -22,9 +21,10 @@ dx serve
 
 Open the local address printed by `dx`. The app reads
 `../output/mcm/database.sqlite`; set `BENCHMARKS_DATABASE` to point at another
-SQLite database. It loads the latest experiment on page load and provides the
-same metric, input projection, mouse navigation, and SVG export controls as the
-offline graph. Use **Refresh results** after a benchmark run.
+SQLite database. The Dioxus controls are populated from the registered analysis
+descriptors. The MCM provider offers runtime and area metrics with aggregate or
+per-input series. The Plotly chart supports click details, pan, zoom, and image
+export. Reload after a benchmark run to load the latest experiment.
 
 The runner uses hard-coded repository, branch, revision selection, coefficients,
 Liberty file, and paper executable paths in `src/bin/run_mcm.rs`. Its default paper
@@ -152,21 +152,10 @@ Commits without finished attempts still get missing points, in frozen order.
 Older data at `output/mcm.sqlite` remains accessible with
 `cargo run --bin view_results -- --database output/mcm.sqlite`.
 
-`--html PATH.html` writes a single offline graph snapshot. Open it in a browser;
-no server or additional dependencies are required. Choose runtime ratio or area
-savings, aggregate all inputs, select one coefficient set, or compare individual
-sets. Scroll to zoom, drag to pan, use box zoom or Reset, and click points for
-commit metadata, coverage, and exclusion reasons. Gray missing-data markers are
-separate from the metric axis. The commit picker also exposes missing results.
-Input parameters are available below the graph. Export SVG saves the visible
-graph. Input changes retain the commit viewport; metric changes reset the
-vertical scale. `--metric` can restrict which metrics the snapshot contains.
-HTML output is separate from `--json`, `--details`, and `--attempts`.
-
-The graph uses the same projections and latest finished results as the text
-viewer. It includes one experiment, chosen with `--experiment` or the latest ID
-by default. Regenerate and reload the file to include new measurements. See the
-[UI design](ui-plan.md) for aggregation and interaction details.
+The web app uses the same latest-finished selection and MCM projections as the
+text viewer. The analysis provider queries a typed `Frame<McmOutput>` from the
+store and runs the projection through `Analysis`; the UI receives only generic
+chart and detail data. See the [UI architecture](ui-plan.md).
 
 Runtime ratio averages repetitions per workload, then divides mean Yosys runtime
 by mean paper runtime on the same matched workload set. It does not average

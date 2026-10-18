@@ -1,7 +1,8 @@
 # Plotly.js
 
 Vendored basic bundle, version **4.1.1**, under the MIT license in
-`plotly.LICENSE`. No CDN access is needed when viewing an export.
+`plotly.LICENSE`. The Dioxus web app loads this local copy; no CDN access is
+needed.
 
 - Bundle: https://cdn.plot.ly/plotly-basic-4.1.1.min.js
 - License: https://github.com/plotly/plotly.js/blob/v4.1.1/LICENSE

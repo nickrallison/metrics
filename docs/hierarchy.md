@@ -310,6 +310,8 @@ Sources: [design.rs](src/design.rs), [benchmarks/synth.rs](src/benchmarks/synth.
 | `PythonRandom`          | Private adapter over MT19937 preserving Python-compatible seed encoding and random draw order.                                             |
 | `Options`               | Private `view_results` CLI configuration: database, experiment, metrics, detail mode, and JSON/text output.                                |
 
-The MCM path is implemented through execution, persistence, scalar views, and
-detailed reports. The generic synthesis executor, automatic resume, general input
-digest verification, process timeouts, and graphical frontend remain deferred.
+The MCM path is implemented through execution, persistence, scalar views,
+detailed reports, and a Dioxus web frontend. Analysis providers use typed store
+queries and expose serializable descriptions and results to generic UI components.
+The generic synthesis executor, automatic resume, general input digest
+verification, and process timeouts remain deferred.

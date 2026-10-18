@@ -17,7 +17,6 @@
 //! comparison unless partial-result fields are explicitly introduced later.
 
 mod generate;
-mod html;
 mod output;
 mod parse;
 mod report;
@@ -46,7 +45,6 @@ use crate::{
 };
 
 pub const KIND: &str = "mcm";
-// Version 2 uses full signed coefficient literals and full-width products.
 pub const VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

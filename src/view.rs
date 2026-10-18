@@ -17,8 +17,6 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{Result, history::CommitId, store::History};
 
-pub mod html;
-
 pub trait View {
     type Output: DeserializeOwned;
     type Selection;

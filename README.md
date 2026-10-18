@@ -14,16 +14,14 @@
 # Results graph
 
 ```sh
-cargo run --bin view_results -- --html output/mcm/results.html
+cd webapp
+dx serve
 ```
 
-Open `output/mcm/results.html` in a browser. The offline graph supports metric
-and coefficient selection, comparisons, mouse zoom/pan, and SVG export.
-Regenerate it to include new results. See [usage](docs/mcm.md).
-
-Run the interactive web version with `cd webapp && dx serve`.
-It reads `../output/mcm/database.sqlite` by default; set
+The Dioxus app reads `../output/mcm/database.sqlite` by default. Set
 `BENCHMARKS_DATABASE=/path/to/database.sqlite` to use another database.
+The web UI renders registered analyses from the store and uses Plotly only for
+the interactive chart. See [MCM results](docs/mcm.md).
 
 # Further Brain Thoughts
 

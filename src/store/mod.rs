@@ -120,6 +120,141 @@ pub struct HistoryQuery {
     pub benchmark_parameters: Option<serde_json::Value>,
 }
 
+/// Select a typed slice of one experiment for analysis.
+///
+/// `measurement` identifies the output schema. Optional commit and benchmark
+/// selections further restrict the frozen dimensions while preserving their
+/// recorded order. Retry selection remains explicit and is not pooled.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Query {
+    pub measurement: HistoryQuery,
+    pub commits: Option<Vec<CommitId>>,
+    pub benchmarks: Option<Vec<usize>>,
+    pub runs: RunSelection,
+}
+
+impl Query {
+    pub fn new(measurement: HistoryQuery) -> Self {
+        Self {
+            measurement,
+            commits: None,
+            benchmarks: None,
+            runs: RunSelection::LatestFinished,
+        }
+    }
+
+    pub fn commits(mut self, commits: Vec<CommitId>) -> Self {
+        self.commits = Some(commits);
+        self
+    }
+
+    pub fn benchmarks(mut self, benchmarks: Vec<usize>) -> Self {
+        self.benchmarks = Some(benchmarks);
+        self
+    }
+
+    pub fn runs(mut self, runs: RunSelection) -> Self {
+        self.runs = runs;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RunSelection {
+    LatestFinished,
+    AllFinished,
+}
+
+/// The selected experiment data, retaining its commit, workload, and run axes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Frame<O> {
+    pub experiment: ExperimentId,
+    pub commits: Vec<Commit>,
+    pub benchmarks: BTreeMap<usize, BenchmarkDefinition>,
+    pub runs: Vec<HistoryEntry<O>>,
+}
+
+impl<O> Frame<O> {
+    fn from_history(experiment: ExperimentId, history: History<O>) -> Self {
+        Self {
+            experiment,
+            commits: history.commits,
+            benchmarks: history.benchmarks,
+            runs: history.records,
+        }
+    }
+}
+
+impl<O> Frame<O> {
+    /// Keep runs accepted by a caller-defined predicate.
+    pub fn filter<F>(mut self, mut predicate: F) -> Self
+    where
+        F: FnMut(&HistoryEntry<O>) -> bool,
+    {
+        self.runs.retain(|run| predicate(run));
+        self
+    }
+
+    /// Map each run to any caller-defined value or row type.
+    pub fn map_runs<R, F>(&self, mut map: F) -> Vec<R>
+    where
+        F: FnMut(&HistoryEntry<O>) -> R,
+    {
+        self.runs.iter().map(&mut map).collect()
+    }
+
+    /// Group caller-defined keys and reduce caller-defined values per group.
+    ///
+    /// The store does not prescribe which dimension forms a group or how its
+    /// values are combined. A reducer can compute a mean, a custom statistic,
+    /// or a richer result carrying its own coverage information.
+    ///
+    /// e.g. Can be used for finding mean, median, min & max
+    pub fn group_reduce<K, V, R, Group, Value, Reduce>(
+        &self,
+        mut group: Group,
+        mut value: Value,
+        mut reduce: Reduce,
+    ) -> BTreeMap<K, R>
+    where
+        K: Ord,
+        Group: FnMut(&HistoryEntry<O>) -> K,
+        Value: FnMut(&HistoryEntry<O>) -> V,
+        Reduce: FnMut(Vec<V>) -> R,
+    {
+        let mut groups = BTreeMap::<K, Vec<V>>::new();
+        for run in &self.runs {
+            groups.entry(group(run)).or_default().push(value(run));
+        }
+        groups
+            .into_iter()
+            .map(|(key, values)| (key, reduce(values)))
+            .collect()
+    }
+}
+
+/// A caller-defined analysis over a loaded frame.
+///
+/// Closures keep filtering, projection, aggregation, and derived metrics open
+/// to benchmark-specific types. Analyses are executable code, so they are not
+/// serialized with experiment data.
+pub struct Analysis<F> {
+    operation: F,
+}
+
+impl<F> Analysis<F> {
+    pub fn new(operation: F) -> Self {
+        Self { operation }
+    }
+
+    pub fn run<O, R>(self, frame: Frame<O>) -> R
+    where
+        F: FnOnce(Frame<O>) -> R,
+    {
+        (self.operation)(frame)
+    }
+}
+
 pub trait Store: ReferenceCache {
     /// Create an experiment and persist its frozen definitions and revision order.
     /// This does not implicitly resume or merge a previous experiment.
@@ -184,6 +319,75 @@ pub trait Store: ReferenceCache {
 
     /// Validate the stored kind/version before deserializing the selected output.
     fn history<O: DeserializeOwned>(&self, query: &HistoryQuery) -> Result<History<O>>;
+
+    /// Load every finished measurement attempt for a query. Stores may opt in
+    /// independently; the default keeps the initial query API usable meanwhile.
+    fn all_finished<O: DeserializeOwned>(&self, _query: &HistoryQuery) -> Result<History<O>> {
+        Err(crate::Error::Unsupported(
+            "loading all finished measurement attempts in this store".into(),
+        ))
+    }
+
+    /// Load a dimensioned frame using the store's normal latest-finished policy.
+    /// Run filtering is applied in Rust so this remains available to every store.
+    fn query<O: DeserializeOwned>(&self, query: &Query) -> Result<Frame<O>> {
+        let history = match query.runs {
+            RunSelection::LatestFinished => self.history(&query.measurement)?,
+            RunSelection::AllFinished => self.all_finished(&query.measurement)?,
+        };
+        let mut frame = Frame::from_history(query.measurement.experiment, history);
+
+        if let Some(selected) = &query.commits {
+            if selected
+                .iter()
+                .enumerate()
+                .any(|(index, id)| selected[..index].contains(id))
+            {
+                return Err(crate::Error::Storage(
+                    "query contains duplicate commits".into(),
+                ));
+            }
+            if selected
+                .iter()
+                .any(|id| !frame.commits.iter().any(|commit| &commit.id == id))
+            {
+                return Err(crate::Error::Storage(
+                    "query contains a commit outside the selected experiment history".into(),
+                ));
+            }
+            frame.commits.retain(|commit| selected.contains(&commit.id));
+        }
+
+        if let Some(selected) = &query.benchmarks {
+            let selected: std::collections::HashSet<_> = selected.iter().copied().collect();
+            if selected.len() != query.benchmarks.as_ref().map_or(0, Vec::len) {
+                return Err(crate::Error::Storage(
+                    "query contains duplicate benchmark indices".into(),
+                ));
+            }
+            if selected
+                .iter()
+                .any(|index| !frame.benchmarks.contains_key(index))
+            {
+                return Err(crate::Error::Storage(
+                    "query contains a benchmark outside the selected experiment history".into(),
+                ));
+            }
+            frame.benchmarks.retain(|index, _| selected.contains(index));
+        }
+
+        frame.runs.retain(|entry| {
+            query
+                .commits
+                .as_ref()
+                .is_none_or(|commits| commits.contains(&entry.record.commit.id))
+                && query
+                    .benchmarks
+                    .as_ref()
+                    .is_none_or(|benchmarks| benchmarks.contains(&entry.record.benchmark_index))
+        });
+        Ok(frame)
+    }
 
     /// Last commit in the processed prefix of this experiment's selected history.
     /// Terminal failures count as processed; unfinished earlier commits block

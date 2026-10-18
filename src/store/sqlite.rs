@@ -439,6 +439,10 @@ impl Store for SqliteStore {
         self.history_selection(query, RunSelection::LatestFinished)
     }
 
+    fn all_finished<O: DeserializeOwned>(&self, query: &HistoryQuery) -> Result<History<O>> {
+        SqliteStore::attempts(self, query)
+    }
+
     fn last_complete(&self, experiment: ExperimentId) -> Result<Option<CommitId>> {
         self.read(|connection| {
             ensure_experiment(connection, experiment)?;

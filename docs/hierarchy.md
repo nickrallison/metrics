@@ -224,6 +224,7 @@ Sources: [store/mod.rs](src/store/mod.rs), [reference.rs](src/store/reference.rs
 | Type                   | Meaning                                                                                                                                                           |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SqliteStore`          | Concrete implementation of both `Store` and `ReferenceCache`. Persists common metadata relationally and domain payloads as JSON.                                  |
+| `ExperimentCatalog`    | Central index mapping opaque catalog IDs to experiment-specific database paths and local experiment IDs.                                                       |
 | `ExperimentDefinition` | Frozen serialized configuration, ordered benchmark definitions, and ordered commits.                                                                              |
 | `BenchmarkDefinition`  | Procedure kind/version and serialized workload parameters.                                                                                                        |
 | `RunStart`             | Durable attempt-start metadata: experiment, commit, workload position/definition, start time, purpose, and optional artifact path.                                |

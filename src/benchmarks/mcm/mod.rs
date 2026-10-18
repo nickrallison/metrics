@@ -16,6 +16,7 @@
 //! Current output models successful comparisons. A phase error fails the whole
 //! comparison unless partial-result fields are explicitly introduced later.
 
+pub mod analysis;
 mod generate;
 mod output;
 mod parse;
@@ -23,6 +24,7 @@ mod report;
 mod run;
 mod view;
 
+pub use analysis::McmPerformance;
 pub use generate::{CoefficientGenerator, CoefficientSets};
 pub use output::{McmOutput, PaperStats, YosysStats};
 pub use report::{

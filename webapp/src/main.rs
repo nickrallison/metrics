@@ -1,13 +1,14 @@
 use dioxus::prelude::*;
 
-pub mod analysis;
 pub mod components;
-pub mod presentation;
 #[cfg(feature = "server")]
 mod providers;
 
+pub use benchmark_analysis_types as presentation;
+use benchmark_analysis_types::{AnalysisRequest, Catalog};
+#[cfg(feature = "server")]
+use benchmarks::{analysis::AnalysisRegistry, store::SqliteStore};
 use components::AnalysisWorkspace;
-use presentation::{AnalysisRequest, Catalog};
 
 fn main() {
     #[cfg(feature = "server")]
@@ -19,34 +20,22 @@ fn main() {
 
 #[server]
 async fn load_catalog() -> Result<Catalog<String>, ServerFnError> {
-    use benchmarks::store::SqliteStore;
-
-    let database = providers::database_path();
-    if !database.is_file() {
-        return Err(ServerFnError::new(format!(
-            "Database {} does not exist. Set BENCHMARKS_DATABASE to the results database.",
-            database.display()
-        )));
-    }
-    let store = SqliteStore::open(database).map_err(server_error)?;
-    let latest = store
-        .latest_experiment()
-        .map_err(server_error)?
-        .ok_or_else(|| ServerFnError::new("No experiments are recorded yet."))?;
-    let definition = store.experiment(latest).map_err(server_error)?;
-    let registry = providers::registry();
-    let benchmark_types: Vec<_> = definition
-        .benchmarks
-        .iter()
-        .map(|benchmark| (benchmark.kind.clone(), benchmark.version))
-        .collect();
-
+    let registry = registry();
+    let experiments = providers::experiments().map_err(ServerFnError::new)?;
     Ok(Catalog {
-        experiments: vec![presentation::ExperimentOption {
-            id: latest.to_string(),
-            label: format!("Experiment {latest}"),
-        }],
-        analyses: registry.descriptors_for(&benchmark_types),
+        experiments: experiments
+            .into_iter()
+            .map(|entry| {
+                let store = SqliteStore::open(&entry.database).map_err(server_error)?;
+                let definition = store.experiment(entry.experiment).map_err(server_error)?;
+                let benchmark_types = benchmark_types(&definition);
+                Ok(presentation::ExperimentOption {
+                    id: entry.id.to_string(),
+                    label: format!("{} · {}", entry.label, entry.experiment),
+                    analyses: registry.descriptors_for(&benchmark_types),
+                })
+            })
+            .collect::<Result<Vec<_>, ServerFnError>>()?,
     })
 }
 
@@ -54,9 +43,40 @@ async fn load_catalog() -> Result<Catalog<String>, ServerFnError> {
 async fn run_analysis(
     request: AnalysisRequest<String>,
 ) -> Result<presentation::AnalysisResult, ServerFnError> {
-    providers::registry()
-        .run(&request)
+    let catalog_id = request
+        .experiment
+        .parse::<i64>()
+        .map_err(|_| ServerFnError::new("Invalid experiment selection"))?;
+    let entry = providers::experiment(catalog_id)
+        .map_err(ServerFnError::new)?
+        .ok_or_else(|| ServerFnError::new("The selected experiment is no longer available"))?;
+    let store = SqliteStore::open(&entry.database).map_err(server_error)?;
+    let definition = store.experiment(entry.experiment).map_err(server_error)?;
+    registry()
+        .run(
+            &request.analysis,
+            &store,
+            entry.experiment,
+            &benchmark_types(&definition),
+            &request.parameters,
+        )
         .map_err(ServerFnError::new)
+}
+
+#[cfg(feature = "server")]
+fn registry() -> AnalysisRegistry {
+    let mut registry = AnalysisRegistry::default();
+    benchmarks::benchmarks::register_analyses(&mut registry);
+    registry
+}
+
+#[cfg(feature = "server")]
+fn benchmark_types(definition: &benchmarks::store::ExperimentDefinition) -> Vec<(String, u32)> {
+    definition
+        .benchmarks
+        .iter()
+        .map(|benchmark| (benchmark.kind.clone(), benchmark.version))
+        .collect()
 }
 
 #[cfg(feature = "server")]
@@ -88,12 +108,21 @@ fn Workspace(catalog: Catalog<String>) -> Element {
     let mut experiment = use_signal(|| catalog.experiments.first().map(|item| item.id.clone()));
     let mut analysis = use_signal(|| {
         catalog
-            .analyses
+            .experiments
             .first()
+            .and_then(|experiment| experiment.analyses.first())
             .map(|item| item.id.clone())
             .unwrap_or_default()
     });
-    let mut parameters = use_signal(|| default_parameters(catalog.analyses.first()));
+    let mut parameters = use_signal(|| {
+        catalog
+            .experiments
+            .first()
+            .and_then(|experiment| experiment.analyses.first())
+            .map(|analysis| default_parameters(Some(analysis)))
+            .unwrap_or_default()
+    });
+    let experiment_catalog = catalog.clone();
     let analysis_catalog = catalog.clone();
     let result = use_resource(move || {
         let experiment = experiment();
@@ -122,15 +151,29 @@ fn Workspace(catalog: Catalog<String>) -> Element {
     rsx! {
         AnalysisWorkspace {
             catalog,
+            selected_experiment: experiment().unwrap_or_default(),
             analysis_id: analysis(),
             parameters: parameters(),
             result: data,
             error,
             loading,
-            on_experiment_change: move |id: String| experiment.set(Some(id)),
+            on_experiment_change: move |id: String| {
+                experiment.set(Some(id.clone()));
+                let descriptor = experiment_catalog
+                    .experiments
+                    .iter()
+                    .find(|item| item.id == id)
+                    .and_then(|item| item.analyses.first());
+                analysis.set(descriptor.map(|item| item.id.clone()).unwrap_or_default());
+                parameters.set(default_parameters(descriptor));
+            },
             on_analysis_change: move |id: String| {
                 analysis.set(id.clone());
-                let descriptor = analysis_catalog.analyses.iter().find(|item| item.id == id);
+                let descriptor = analysis_catalog
+                    .experiments
+                    .iter()
+                    .find(|item| Some(&item.id) == experiment().as_ref())
+                    .and_then(|item| item.analyses.iter().find(|item| item.id == id));
                 parameters.set(default_parameters(descriptor));
             },
             on_parameter_change: move |(id, value): (String, String)| {

@@ -23,9 +23,11 @@
 //! changes timing. Verify original inputs, tools, and benchmark version before
 //! claiming reproduction; discarded artifacts cannot be recovered from old runs.
 
+mod catalog;
 mod reference;
 mod sqlite;
 
+pub use catalog::{CatalogExperiment, ExperimentCatalog};
 pub use reference::{Reference, ReferenceCache, ReferenceId};
 pub use sqlite::SqliteStore;
 
@@ -256,6 +258,11 @@ impl<F> Analysis<F> {
 }
 
 pub trait Store: ReferenceCache {
+    /// Persistent database location, when this store has one.
+    fn database_path(&self) -> Option<&std::path::Path> {
+        None
+    }
+
     /// Create an experiment and persist its frozen definitions and revision order.
     /// This does not implicitly resume or merge a previous experiment.
     fn register_experiment(&mut self, definition: &ExperimentDefinition) -> Result<ExperimentId>;

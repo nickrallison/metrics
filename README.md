@@ -18,10 +18,12 @@ cd webapp
 dx serve
 ```
 
-The Dioxus app reads `../output/mcm/database.sqlite` by default. Set
-`BENCHMARKS_DATABASE=/path/to/database.sqlite` to use another database.
-The web UI renders registered analyses from the store and uses Plotly only for
-the interactive chart. See [MCM results](docs/mcm.md).
+The Dioxus app reads the shared `../output/catalog.sqlite` index, which points
+to experiment-specific databases. Set `BENCHMARKS_CATALOG_DATABASE` to use
+another index, or `BENCHMARKS_OUTPUT_DIR` to change the default results root.
+Older experiment databases under that root are indexed on first load. The web
+UI renders registered analyses from the store and uses Plotly only for the
+interactive chart. See [MCM results](docs/mcm.md).
 
 # Further Brain Thoughts
 

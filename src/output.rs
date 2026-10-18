@@ -39,6 +39,13 @@ impl OutputLayout {
         Ok(self.experiment_directory()?.join("database.sqlite"))
     }
 
+    /// Shared index that points to experiment-specific databases under this root.
+    pub fn catalog_database_path(&self) -> PathBuf {
+        std::env::var_os("BENCHMARKS_CATALOG_DATABASE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.output_dir.join("catalog.sqlite"))
+    }
+
     /// UTC RFC 3339, with fixed nanosecond precision and an explicit `Z` suffix.
     /// Atomic directory creation also protects simultaneous invocations. If the
     /// clock gives an existing timestamp, advance one nanosecond and retry.

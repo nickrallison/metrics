@@ -34,8 +34,8 @@ use crate::{
     history::{BranchHistory, Commit, RevisionSelection},
     output::OutputLayout,
     store::{
-        BenchmarkDefinition, ExperimentDefinition, ExperimentId, Outcome, RunPurpose, RunStart,
-        Store,
+        BenchmarkDefinition, ExperimentCatalog, ExperimentDefinition, ExperimentId, Outcome,
+        RunPurpose, RunStart, Store,
     },
     suite::Suite,
 };
@@ -168,6 +168,10 @@ where
         },
         options.experiment,
     )?;
+    if let Some(database) = store.database_path() {
+        let mut catalog = ExperimentCatalog::open(experiment.output.catalog_database_path())?;
+        catalog.register(database, experiment_id, &experiment.output.experiment)?;
+    }
     // Keep invocation settings separately from the experiment's original
     // configuration, including the requested policy when no raw files are kept.
     configuration["experiment_id"] = serde_json::to_value(experiment_id)?;

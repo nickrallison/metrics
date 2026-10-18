@@ -1,20 +1,17 @@
-//! Serializable contract between analysis providers and the Dioxus UI.
-//!
-//! Keep benchmark-specific types behind a provider. The browser only sees
-//! descriptors and presentation data, never stored output payloads.
+//! Shared analysis descriptors and results for native and browser clients.
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Catalog<E> {
     pub experiments: Vec<ExperimentOption<E>>,
-    pub analyses: Vec<AnalysisDescriptor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExperimentOption<E> {
     pub id: E,
     pub label: String,
+    pub analyses: Vec<AnalysisDescriptor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

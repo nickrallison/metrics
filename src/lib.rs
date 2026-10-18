@@ -8,6 +8,7 @@
 //! `docs/scaffold.md` contains the implementation order and open decisions;
 //! `examples/reference/` preserves the original MCM experiment and porting notes.
 
+pub mod analysis;
 pub mod benchmark;
 pub mod benchmarks;
 pub mod build;

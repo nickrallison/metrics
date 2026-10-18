@@ -1,20 +1,19 @@
-use benchmarks::{
-    benchmarks::mcm::{self, McmMetric, McmOutput, McmSelection, McmView},
-    store::{Analysis, ExperimentId, Frame, History, HistoryQuery, Query, SqliteStore, Store},
-    view::View,
-};
-
 use crate::{
-    analysis::AnalysisProvider,
-    presentation::{
-        AnalysisDescriptor, AnalysisRequest, AnalysisResult, ChartPoint, ChartSeries, ChartSpec,
+    analysis::{
+        AnalysisDescriptor, AnalysisProvider, AnalysisResult, ChartPoint, ChartSeries, ChartSpec,
         DetailField, ParameterDescriptor, ParameterKind, ParameterOption, ReferenceLine,
     },
+    benchmarks::mcm::{self, McmMetric, McmOutput, McmSelection, McmView},
+    store::{
+        Analysis, BenchmarkDefinition, ExperimentId, Frame, History, HistoryQuery, Query,
+        SqliteStore, Store,
+    },
+    view::{Point, View},
 };
 
 pub struct McmPerformance;
 
-impl AnalysisProvider<String> for McmPerformance {
+impl AnalysisProvider for McmPerformance {
     fn descriptor(&self) -> AnalysisDescriptor {
         AnalysisDescriptor {
             id: "mcm.performance".into(),
@@ -63,24 +62,23 @@ impl AnalysisProvider<String> for McmPerformance {
             .any(|(kind, version)| kind == mcm::KIND && [1, mcm::VERSION].contains(version))
     }
 
-    fn run(&self, request: &AnalysisRequest<String>) -> Result<AnalysisResult, String> {
-        let experiment = request
-            .experiment
-            .parse::<ExperimentId>()
-            .map_err(|_| "Invalid experiment identifier".to_string())?;
-        let metric = match request.parameters.get("metric").and_then(|v| v.as_str()) {
+    fn run(
+        &self,
+        store: &SqliteStore,
+        experiment: ExperimentId,
+        parameters: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<AnalysisResult, String> {
+        let metric = match parameters.get("metric").and_then(|v| v.as_str()) {
             Some("area") => McmMetric::AreaSavings,
             Some("runtime") | None => McmMetric::RuntimeRatio,
             Some(value) => return Err(format!("Unknown metric {value:?}")),
         };
-        let projection = match request.parameters.get("series").and_then(|v| v.as_str()) {
+        let projection = match parameters.get("series").and_then(|v| v.as_str()) {
             Some("workloads") => Projection::EachWorkload,
             Some("aggregate") | None => Projection::Aggregate,
             Some(value) => return Err(format!("Unknown series selection {value:?}")),
         };
 
-        let database = super::database_path();
-        let store = SqliteStore::open(database).map_err(|error| error.to_string())?;
         let definition = store
             .experiment(experiment)
             .map_err(|error| error.to_string())?;
@@ -154,9 +152,7 @@ fn project(
             .map_err(|error| error.to_string())?
             .series
             .into_iter()
-            .map(|series| {
-                to_chart_series("aggregate".into(), series_label.into(), series.points)
-            })
+            .map(|series| to_chart_series("aggregate".into(), series_label.into(), series.points))
             .collect(),
         Projection::EachWorkload => {
             let mut series = Vec::new();
@@ -210,9 +206,7 @@ fn project(
     })
 }
 
-fn benchmarks_for(
-    history: &History<McmOutput>,
-) -> Vec<(usize, benchmarks::store::BenchmarkDefinition)> {
+fn benchmarks_for(history: &History<McmOutput>) -> Vec<(usize, BenchmarkDefinition)> {
     history
         .benchmarks
         .iter()
@@ -220,7 +214,7 @@ fn benchmarks_for(
         .collect()
 }
 
-fn to_chart_series(id: String, label: String, points: Vec<benchmarks::view::Point>) -> ChartSeries {
+fn to_chart_series(id: String, label: String, points: Vec<Point>) -> ChartSeries {
     ChartSeries {
         id,
         label,

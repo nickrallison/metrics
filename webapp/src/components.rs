@@ -26,6 +26,7 @@ struct ChartPointSelection {
 #[component]
 pub fn AnalysisWorkspace(
     catalog: Catalog<String>,
+    selected_experiment: String,
     analysis_id: String,
     parameters: serde_json::Map<String, serde_json::Value>,
     result: Option<AnalysisResult>,
@@ -35,9 +36,14 @@ pub fn AnalysisWorkspace(
     on_analysis_change: EventHandler<String>,
     on_parameter_change: EventHandler<(String, String)>,
 ) -> Element {
-    let active_analysis = catalog
-        .analyses
+    let active_experiment = catalog
+        .experiments
         .iter()
+        .find(|experiment| experiment.id == selected_experiment);
+    let analyses = active_experiment.map(|experiment| &experiment.analyses);
+    let active_analysis = analyses
+        .into_iter()
+        .flatten()
         .find(|analysis| analysis.id == analysis_id);
     let mut selected_point = use_signal(|| None::<ChartPoint>);
     let chart_key = result
@@ -65,16 +71,12 @@ pub fn AnalysisWorkspace(
                 label { class: "field",
                     "Experiment"
                     select {
-                        value: if catalog.experiments.is_empty() { "".to_string() } else { "0".to_string() },
+                        value: selected_experiment.clone(),
                         onchange: move |event| {
-                            if let Ok(index) = event.value().parse::<usize>() {
-                                if let Some(experiment) = catalog.experiments.get(index) {
-                                    on_experiment_change.call(experiment.id.clone());
-                                }
-                            }
+                            on_experiment_change.call(event.value());
                         },
-                        for (index, experiment) in catalog.experiments.iter().enumerate() {
-                            option { value: index.to_string(), "{experiment.label}" }
+                        for experiment in &catalog.experiments {
+                            option { value: experiment.id.clone(), "{experiment.label}" }
                         }
                     }
                 }
@@ -83,7 +85,7 @@ pub fn AnalysisWorkspace(
                     select {
                         value: analysis_id.clone(),
                         onchange: move |event| on_analysis_change.call(event.value()),
-                        for analysis in &catalog.analyses {
+                        for analysis in analyses.into_iter().flatten() {
                             option { value: analysis.id.clone(), "{analysis.label}" }
                         }
                     }
@@ -158,7 +160,7 @@ pub fn AnalysisWorkspace(
                 }
             } else if !loading && error.is_none() {
                 section { class: "empty-state",
-                    if catalog.analyses.is_empty() {
+                    if analyses.is_none_or(Vec::is_empty) {
                         p { "No analyses are available for this experiment." }
                     } else {
                         p { "Select an analysis to view results." }

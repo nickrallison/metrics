@@ -31,6 +31,7 @@ use schema::{
 /// Relationships and state transitions are validated here, not by SQL constraints.
 pub struct SqliteStore {
     connection: RefCell<SqliteConnection>,
+    database_path: std::path::PathBuf,
 }
 
 impl fmt::Debug for SqliteStore {
@@ -89,6 +90,7 @@ impl SqliteStore {
         })?;
         Ok(Self {
             connection: RefCell::new(connection),
+            database_path: path.to_path_buf(),
         })
     }
 
@@ -109,6 +111,16 @@ impl SqliteStore {
             Ok(experiments::table
                 .select(max(experiments::id))
                 .first(connection)?)
+        })
+    }
+
+    /// All experiment IDs registered in this database, in stable order.
+    pub fn experiment_ids(&self) -> Result<Vec<ExperimentId>> {
+        self.read(|connection| {
+            Ok(experiments::table
+                .select(experiments::id)
+                .order(experiments::id.asc())
+                .load(connection)?)
         })
     }
 
@@ -226,6 +238,10 @@ impl ReferenceCache for SqliteStore {
 }
 
 impl Store for SqliteStore {
+    fn database_path(&self) -> Option<&Path> {
+        (self.database_path != Path::new(":memory:")).then_some(&self.database_path)
+    }
+
     fn prepare_experiment(
         &mut self,
         definition: &ExperimentDefinition,

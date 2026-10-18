@@ -19,12 +19,13 @@ cd webapp
 dx serve
 ```
 
-Open the local address printed by `dx`. The app reads
-`../output/mcm/database.sqlite`; set `BENCHMARKS_DATABASE` to point at another
-SQLite database. The Dioxus controls are populated from the registered analysis
-descriptors. The MCM provider offers runtime and area metrics with aggregate or
-per-input series. The Plotly chart supports click details, pan, zoom, and image
-export. Reload after a benchmark run to load the latest experiment.
+Open the local address printed by `dx`. The app reads the shared
+`../output/catalog.sqlite` index, which points to the per-experiment databases
+under `output/`. Set `BENCHMARKS_CATALOG_DATABASE` to use another index or
+`BENCHMARKS_OUTPUT_DIR` to change the output root. Existing databases are added
+to the index automatically. Experiment-specific typed analysis adapters provide
+their descriptors; the Dioxus UI receives only generic controls and chart data.
+The Plotly chart supports click details, pan, zoom, and image export.
 
 The runner uses hard-coded repository, branch, revision selection, coefficients,
 Liberty file, and paper executable paths in `src/bin/run_mcm.rs`. Its default paper
@@ -153,9 +154,10 @@ Older data at `output/mcm.sqlite` remains accessible with
 `cargo run --bin view_results -- --database output/mcm.sqlite`.
 
 The web app uses the same latest-finished selection and MCM projections as the
-text viewer. The analysis provider queries a typed `Frame<McmOutput>` from the
-store and runs the projection through `Analysis`; the UI receives only generic
-chart and detail data. See the [UI architecture](ui-plan.md).
+text viewer. Its typed adapter queries a `Frame<McmOutput>` and runs the
+projection through `Analysis`; the UI receives only generic chart and detail
+data. The central catalog maps opaque UI experiment IDs to each database and
+local experiment ID. See the [UI architecture](ui-plan.md).
 
 Runtime ratio averages repetitions per workload, then divides mean Yosys runtime
 by mean paper runtime on the same matched workload set. It does not average
